@@ -4,6 +4,8 @@ RoCrypt
 DESCRIPTION:
 	This module contains functions to calculate SHA digest:
 	    SHA-256, SHA-512
+	And checksum functions functions:
+        CRC32
 	Written in pure Lua.
 USAGE:
 	Input data should be a string
@@ -12,16 +14,17 @@ USAGE:
 		local RoCrypt = require(script.RoCrypt)
 		local hash = RoCrypt.sha256("string here")
 	SHA2 hash functions:
-		HashLib.sha256
-		HashLib.sha512
+		RoCrypt.sha256
+		RoCrypt.sha512
+		RoCrypt.crc32
 --]]--
 
 RoCrypt = {}
-band, bxor, bnot, rrotate, rshift = bit32.band, bit32.bxor, bit32.bnot, bit32.rrotate, bit32.rshift
+band, bxor, bnot, rrotate, rshift, bor, lrotate, lshift = bit32.band, bit32.bxor, bit32.bnot, bit32.rrotate, bit32.rshift, bit32.bor, bit32.lrotate, bit32.lshift
+char, rep, sub, format = string.char, string.rep, string.sub, string.format
 
+function RoCrypt.sha256(message: string)
 
-function RoCrypt.sha256(message)
-    
     local K = {
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
         0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -37,7 +40,7 @@ function RoCrypt.sha256(message)
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
         0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
     }
-    
+
     local function preprocess(message)
         local len = #message
         local padding_len = 64 - ((len + 9) % 64)
@@ -74,8 +77,8 @@ function RoCrypt.sha256(message)
         state[7] = (state[7] + g) % 2^32
         state[8] = (state[8] + h) % 2^32
     end
-    
-    
+
+
     local padded_message = preprocess(message)
     local state = {unpack(H)}
     for i = 1, #padded_message, 64 do
@@ -90,8 +93,26 @@ function RoCrypt.sha256(message)
 end
 
 
-function RoCrypt.sha512(message)
-    
+
+function RoCrypt.crc32(message: string, hex: boolean?)
+    local crc = 0xFFFFFFFF
+    local polynomial = 0xEDB88320
+
+    for i = 1, #message do
+        local byte = string.byte(message, i)
+        crc = bxor(crc, byte)
+
+        for _ = 1, 8 do
+            local mask = -band(crc, 1)
+            crc = bxor(rshift(crc, 1), band(polynomial, mask))
+        end
+    end
+        if hex == true then
+        return string.format("%X", bxor(crc, 0xFFFFFFFF))
+    elseif not hex or hex == false then
+        return bxor(crc, 0xFFFFFFFF)
+    end
 end
+
 
 return RoCrypt

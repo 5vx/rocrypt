@@ -15,8 +15,8 @@ A pure-Lua (5.1) cryptography module supporting:
   - Snowflake
 
 ## Credit
-RobloxGamerPro200007 - RSA function
-Egor-Skriptunoff - Creating the original SHA backbone
+- RobloxGamerPro200007 - RSA function
+- Egor-Skriptunoff - Creating the original SHA backbone
 
 ## Usage
 Input data should be a string. Result (SHA digest) is returned in hexadecimal representation as a string of lowercase hex digits.

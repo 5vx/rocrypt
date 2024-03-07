@@ -2,102 +2,398 @@
 RoCrypt
 ----------------------------------------------------------------------------------------
 DESCRIPTION:
-	This module contains functions to calculate SHA digest
-	    SHA-256, SHA-512
+	This module contains cryptographic hash functions (CHF)
+	   MD5 
+	   SHA-224, SHA-256, SHA-384, SHA-512
 	Cyclic redundancy checks (CRC) algorithms
         CRC32
-    And asymmetric algorithms
+    Binary-to-hex/encoding algorithms
+        BASE64
+    Asymmetric algorithms
         RSA
-	Written in pure Lua.
+    UID (unique identifier) algorithms
+        Snowflake
+	All written in pure Lua.
 USAGE:
 	Input data should be a string
 	Result (SHA digest) is returned in hexadecimal representation as a string of lowercase hex digits.
 	Simplest usage example:
 		local RoCrypt = require(script.RoCrypt)
 		local hash = RoCrypt.sha256("string here")
-	SHA2 hash functions:
+	Cryptographic functions:
 		RoCrypt.sha256
+		RoCrypt.sha224
+		RoCrypt.sha384
 		RoCrypt.sha512
 		RoCrypt.crc32
 		RoCrypt.rsa
+		RoCrypt.base64
+		              .decode()
+		              .encode()
+		RoCrypt.md5
 ----------------------------------------------------------------------------------------
 CREDIT: RobloxGamerPro200007 - RSA function
 --]]--
 
 RoCrypt = {}
 band, bxor, bnot, rrotate, rshift, bor, lrotate, lshift = bit32.band, bit32.bxor, bit32.bnot, bit32.rrotate, bit32.rshift, bit32.bor, bit32.lrotate, bit32.lshift
-char, rep, sub, format = string.char, string.rep, string.sub, string.format
-
-function RoCrypt.sha256(message: string)
-
-    local K = {
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-    }
-
-    local H = {
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
-    }
-
-    local function preprocess(message)
-        local len = #message
-        local padding_len = 64 - ((len + 9) % 64)
-        local padded_message = message.."\128"..string.rep("\0", padding_len)..string.pack(">I8", len * 8)
-        return padded_message
-    end
-
-    local function processBlock(block, state)
-        local W = {}
-        for i = 1, 16 do
-            W[i] = string.unpack(">I4", block, (i - 1) * 4 + 1)
+char, rep, sub, format, byte = string.char, string.rep, string.sub, string.format, string.byte
+floor = math.floor
+bit = bit32
+persistent = {
+    snowflake = {
+        id = nil,
+        increment = 0
+    },
+    md5 = {
+        common_W = {}
+    },
+    sha_backbone = function()
+        local AND_of_two_bytes = {}  -- look-up table (256*256 entries)
+        for idx = 0, 65535 do
+            local x = idx % 256
+            local y = (idx - x) / 256
+            local res = 0
+            local w = 1
+            while x * y ~= 0 do
+                local rx = x % 2
+                local ry = y % 2
+                res = res + rx * ry * w
+                x = (x - rx) / 2
+                y = (y - ry) / 2
+                w = w * 2
+            end
+            AND_of_two_bytes[idx] = res
         end
-        for i = 17, 64 do
-            local s0 = bxor(rrotate(W[i - 15], 7), rrotate(W[i - 15], 18), rshift(W[i - 15], 3))
-            local s1 = bxor(rrotate(W[i - 2], 17), rrotate(W[i - 2], 19), rshift(W[i - 2], 10))
-            W[i] = (W[i - 16] + s0 + W[i - 7] + s1) % 2^32
-        end
-        local a, b, c, d, e, f, g, h = unpack(state)
-        for i = 1, 64 do
-            local S1 = bxor(rrotate(e, 6), rrotate(e, 11), rrotate(e, 25))
-            local ch = bxor(band(e, f), band(bnot(e), g))
-            local temp1 = (h + S1 + ch + K[i] + W[i]) % 2^32
-            local S0 = bxor(rrotate(a, 2), rrotate(a, 13), rrotate(a, 22))
-            local maj = bxor(band(a, b), band(a, c), band(b, c))
-            local temp2 = (S0 + maj) % 2^32
-            h, g, f, e, d, c, b, a = g, f, e, (d + temp1) % 2^32, c, b, a, (temp1 + temp2) % 2^32
-        end
-        state[1] = (state[1] + a) % 2^32
-        state[2] = (state[2] + b) % 2^32
-        state[3] = (state[3] + c) % 2^32
-        state[4] = (state[4] + d) % 2^32
-        state[5] = (state[5] + e) % 2^32
-        state[6] = (state[6] + f) % 2^32
-        state[7] = (state[7] + g) % 2^32
-        state[8] = (state[8] + h) % 2^32
-    end
 
 
-    local padded_message = preprocess(message)
-    local state = {unpack(H)}
-    for i = 1, #padded_message, 64 do
-        local block = padded_message:sub(i, i + 63)
-        processBlock(block, state)
+
+
+
+        local function HEX(x)
+            return string.format("%08x", x % 4294967296)
+        end
+        local sha2_K_lo, sha2_K_hi, sha2_H_lo, sha2_H_hi = {}, {}, {}, {}
+        local sha2_H_ext256 = {[224] = {}, [256] = sha2_H_hi}
+        local sha2_H_ext512_lo, sha2_H_ext512_hi = {[384] = {}, [512] = sha2_H_lo}, {[384] = {}, [512] = sha2_H_hi}
+
+        local common_W = {}
+
+        local function sha256_feed_64(H, K, str, W, offs, size)
+            for pos = offs, size + offs - 1, 64 do
+                for j = 1, 16 do
+                    pos = pos + 4
+                    local a, b, c, d = byte(str, pos - 3, pos)
+                    W[j] = ((a * 256 + b) * 256 + c) * 256 + d
+                end
+                for j = 17, 64 do
+                    local a, b = W[j-15], W[j-2]
+                    W[j] = bxor(rrotate(a, 7), lrotate(a, 14), rshift(a, 3)) + bxor(lrotate(b, 15), lrotate(b, 13), rshift(b, 10)) + W[j-7] + W[j-16]
+                end
+                local a, b, c, d, e, f, g, h, z = H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8], nil
+                for j = 1, 64 do
+                    z = bxor(rrotate(e, 6), rrotate(e, 11), lrotate(e, 7)) + band(e, f) + band(-1-e, g) + h + K[j] + W[j]
+                    h = g
+                    g = f
+                    f = e
+                    e = z + d
+                    d = c
+                    c = b
+                    b = a
+                    a = z + band(d, c) + band(a, bxor(d, c)) + bxor(rrotate(a, 2), rrotate(a, 13), lrotate(a, 10))
+                end
+                H[1], H[2], H[3], H[4] = (a + H[1]) % 4294967296, (b + H[2]) % 4294967296, (c + H[3]) % 4294967296, (d + H[4]) % 4294967296
+                H[5], H[6], H[7], H[8] = (e + H[5]) % 4294967296, (f + H[6]) % 4294967296, (g + H[7]) % 4294967296, (h + H[8]) % 4294967296
+            end
+        end
+
+        local function sha512_feed_128(H_lo, H_hi, K_lo, K_hi, str, W, offs, size)
+            -- offs >= 0, size >= 0, size is multiple of 128
+            -- W1_hi, W1_lo, W2_hi, W2_lo, ...   Wk_hi = W[2*k-1], Wk_lo = W[2*k]
+            for pos = offs, size + offs - 1, 128 do
+                for j = 1, 32 do
+                    pos = pos + 4
+                    local a, b, c, d = byte(str, pos - 3, pos)
+                    W[j] = ((a * 256 + b) * 256 + c) * 256 + d
+                end
+                local tmp1, tmp2
+                for jj = 17 * 2, 80 * 2, 2 do
+                    local a_lo, a_hi, b_lo, b_hi = W[jj-30], W[jj-31], W[jj-4], W[jj-5]
+                    tmp1 = bxor(rshift(a_lo, 1) + lshift(a_hi, 31), rshift(a_lo, 8) + lshift(a_hi, 24), rshift(a_lo, 7) + lshift(a_hi, 25)) + bxor(rshift(b_lo, 19) + lshift(b_hi, 13), lshift(b_lo, 3) + rshift(b_hi, 29), rshift(b_lo, 6) + lshift(b_hi, 26)) + W[jj-14] + W[jj-32]
+                    tmp2 = tmp1 % 4294967296
+                    W[jj-1] = bxor(rshift(a_hi, 1) + lshift(a_lo, 31), rshift(a_hi, 8) + lshift(a_lo, 24), rshift(a_hi, 7)) + bxor(rshift(b_hi, 19) + lshift(b_lo, 13), lshift(b_hi, 3) + rshift(b_lo, 29), rshift(b_hi, 6)) + W[jj-15] + W[jj-33] + (tmp1 - tmp2) / 4294967296
+                    W[jj] = tmp2
+                end
+                local a_lo, b_lo, c_lo, d_lo, e_lo, f_lo, g_lo, h_lo, z_lo = H_lo[1], H_lo[2], H_lo[3], H_lo[4], H_lo[5], H_lo[6], H_lo[7], H_lo[8], nil
+                local a_hi, b_hi, c_hi, d_hi, e_hi, f_hi, g_hi, h_hi, z_hi = H_hi[1], H_hi[2], H_hi[3], H_hi[4], H_hi[5], H_hi[6], H_hi[7], H_hi[8], nil
+                for j = 1, 80 do
+                    local jj = 2 * j
+                    tmp1 = bxor(rshift(e_lo, 14) + lshift(e_hi, 18), rshift(e_lo, 18) + lshift(e_hi, 14), lshift(e_lo, 23) + rshift(e_hi, 9)) + band(e_lo, f_lo) + band(-1-e_lo, g_lo) + h_lo + K_lo[j] + W[jj]
+                    z_lo = tmp1 % 4294967296
+                    z_hi = bxor(rshift(e_hi, 14) + lshift(e_lo, 18), rshift(e_hi, 18) + lshift(e_lo, 14), lshift(e_hi, 23) + rshift(e_lo, 9)) + band(e_hi, f_hi) + band(-1-e_hi, g_hi) + h_hi + K_hi[j] + W[jj-1] + (tmp1 - z_lo) / 4294967296
+                    h_lo = g_lo
+                    h_hi = g_hi
+                    g_lo = f_lo
+                    g_hi = f_hi
+                    f_lo = e_lo
+                    f_hi = e_hi
+                    tmp1 = z_lo + d_lo
+                    e_lo = tmp1 % 4294967296
+                    e_hi = z_hi + d_hi + (tmp1 - e_lo) / 4294967296
+                    d_lo = c_lo
+                    d_hi = c_hi
+                    c_lo = b_lo
+                    c_hi = b_hi
+                    b_lo = a_lo
+                    b_hi = a_hi
+                    tmp1 = z_lo + band(d_lo, c_lo) + band(b_lo, bxor(d_lo, c_lo)) + bxor(rshift(b_lo, 28) + lshift(b_hi, 4), lshift(b_lo, 30) + rshift(b_hi, 2), lshift(b_lo, 25) + rshift(b_hi, 7))
+                    a_lo = tmp1 % 4294967296
+                    a_hi = z_hi + (band(d_hi, c_hi) + band(b_hi, bxor(d_hi, c_hi))) + bxor(rshift(b_hi, 28) + lshift(b_lo, 4), lshift(b_hi, 30) + rshift(b_lo, 2), lshift(b_hi, 25) + rshift(b_lo, 7)) + (tmp1 - a_lo) / 4294967296
+                end
+                tmp1 = H_lo[1] + a_lo
+                tmp2 = tmp1 % 4294967296
+                H_lo[1], H_hi[1] = tmp2, (H_hi[1] + a_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+                tmp1 = H_lo[2] + b_lo
+                tmp2 = tmp1 % 4294967296
+                H_lo[2], H_hi[2] = tmp2, (H_hi[2] + b_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+                tmp1 = H_lo[3] + c_lo
+                tmp2 = tmp1 % 4294967296
+                H_lo[3], H_hi[3] = tmp2, (H_hi[3] + c_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+                tmp1 = H_lo[4] + d_lo
+                tmp2 = tmp1 % 4294967296
+                H_lo[4], H_hi[4] = tmp2, (H_hi[4] + d_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+                tmp1 = H_lo[5] + e_lo
+                tmp2 = tmp1 % 4294967296
+                H_lo[5], H_hi[5] = tmp2, (H_hi[5] + e_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+                tmp1 = H_lo[6] + f_lo
+                tmp2 = tmp1 % 4294967296
+                H_lo[6], H_hi[6] = tmp2, (H_hi[6] + f_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+                tmp1 = H_lo[7] + g_lo
+                tmp2 = tmp1 % 4294967296
+                H_lo[7], H_hi[7] = tmp2, (H_hi[7] + g_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+                tmp1 = H_lo[8] + h_lo
+                tmp2 = tmp1 % 4294967296
+                H_lo[8], H_hi[8] = tmp2, (H_hi[8] + h_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+            end
+        end
+
+        --------------------------------------------------------------------------------
+        -- CALCULATING THE MAGIC NUMBERS (roots of primes)
+        --------------------------------------------------------------------------------
+
+        do
+            local function mul(src1, src2, factor, result_length)
+                -- Long arithmetic multiplication: src1 * src2 * factor
+                -- src1, src2 - long integers (arrays of digits in base 2^24)
+                -- factor - short integer
+                local result = {}
+                local carry = 0
+                local value = 0.0
+                local weight = 1.0
+                for j = 1, result_length do
+                    local prod = 0
+                    for k = math.max(1, j + 1 - #src2), math.min(j, #src1) do
+                        prod = prod + src1[k] * src2[j + 1 - k]
+                    end
+                    carry = carry + prod * factor
+                    local digit = carry % 16777216
+                    result[j] = digit
+                    carry = floor(carry / 16777216)
+                    value = value + digit * weight
+                    weight = weight * 2^24
+                end
+                return result,value
+            end
+
+            local idx, step, p, one  = 0, {4, 1, 2, -2, 2}, 4, {1}
+            local sqrt_hi, sqrt_lo, idx_disp = sha2_H_hi, sha2_H_lo, 0
+            repeat
+                p = p + step[p % 6]
+                local d = 1
+                repeat
+                    d = d + step[d % 6]
+                    if d * d > p then
+                        idx = idx + 1
+                        local root = p^(1/3)
+                        local R = mul({floor(root * 2^40)}, one, 1, 2)
+                        local _, delta = mul(R, mul(R, R, 1, 4), -1, 4)
+                        local hi = R[2] % 65536 * 65536 + floor(R[1] / 256)
+                        local lo = R[1] % 256 * 16777216 + floor(delta * (2^-56 / 3) * root / p)
+                        sha2_K_hi[idx], sha2_K_lo[idx] = hi, lo
+                        if idx < 17 then
+                            root = p^(1/2)
+                            R = mul({floor(root * 2^40)}, one, 1, 2)
+                            _, delta = mul(R, R, -1, 2)
+                            hi = R[2] % 65536 * 65536 + floor(R[1] / 256)
+                            lo = R[1] % 256 * 16777216 + floor(delta * 2^-17 / root)
+                            sha2_H_ext256[224][idx + idx_disp] = lo
+                            sqrt_hi[idx + idx_disp], sqrt_lo[idx + idx_disp] = hi, lo
+                            if idx == 8 then
+                                sqrt_hi, sqrt_lo, idx_disp = sha2_H_ext512_hi[384], sha2_H_ext512_lo[384], -8
+                            end
+                        end
+                        break
+                    end
+                until p % d == 0
+            until idx > 79
+        end
+
+        -- Calculating IV for SHA512/224 and SHA512/256
+        for width = 224, 256, 32 do
+            local H_lo, H_hi = {}, {}
+            for j = 1, 8 do
+                H_lo[j] = bxor(sha2_H_lo[j], 0xa5a5a5a5)
+                H_hi[j] = bxor(sha2_H_hi[j], 0xa5a5a5a5)
+            end
+            sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, "SHA-512/"..tonumber(width).."\128"..string.rep("\0", 115).."\88", common_W, 0, 128)
+            sha2_H_ext512_lo[width] = H_lo
+            sha2_H_ext512_hi[width] = H_hi
+        end
+
+
+        --------------------------------------------------------------------------------
+        -- FINAL FUNCTIONS
+        --------------------------------------------------------------------------------
+
+        function sha256ext(width, text)
+
+            -- Create an instance (private objects for current calculation)
+            local H, length, tail = {unpack(sha2_H_ext256[width])}, 0, ""
+
+            local function partial(text_part)
+                if text_part then
+                    if tail then
+                        length = length + #text_part
+                        local offs = 0
+                        if tail ~= "" and #tail + #text_part >= 64 then
+                            offs = 64 - #tail
+                            sha256_feed_64(H, sha2_K_hi, tail..sub(text_part, 1, offs), common_W, 0, 64)
+                            tail = ""
+                        end
+                        local size = #text_part - offs
+                        local size_tail = size % 64
+                        sha256_feed_64(H, sha2_K_hi, text_part, common_W, offs, size - size_tail)
+                        tail = tail..sub(text_part, #text_part + 1 - size_tail)
+                        return partial
+                    else
+                        error("Adding more chunks is not allowed after asking for final result", 2)
+                    end
+                else
+                    if tail then
+                        local final_blocks = {tail, "\128", string.rep("\0", (-9 - length) % 64 + 1)}
+                        tail = nil
+                        -- Assuming user data length is shorter than 2^53 bytes
+                        -- Anyway, it looks very unrealistic that one would spend enough time to process a 2^53 bytes of data by using this Lua script :-)
+                        -- 2^53 bytes = 2^56 bits, so "bit-counter" fits in 7 bytes
+                        length = length * (8 / 256^7)  -- convert "byte-counter" to "bit-counter" and move floating point to the left
+                        for j = 4, 10 do
+                            length = length % 1 * 256
+                            final_blocks[j] = char(floor(length))
+                        end
+                        final_blocks = table.concat(final_blocks)
+                        sha256_feed_64(H, sha2_K_hi, final_blocks, common_W, 0, #final_blocks)
+                        local max_reg = width / 32
+                        for j = 1, max_reg do
+                            H[j] = HEX(H[j])
+                        end
+                        H = table.concat(H, "", 1, max_reg)
+                    end
+                    return H
+                end
+            end
+
+            if text then
+                -- Actually perform calculations and return the SHA256 digest of a message
+                return partial(text)()
+            else
+                -- Return function for partial chunk loading
+                -- User should feed every chunks of input data as single argument to this function and receive SHA256 digest by invoking this function without an argument
+                return partial
+            end
+
+        end
+
+
+        function sha512ext(width, text)
+
+            -- Create an instance (private objects for current calculation)
+            local length, tail, H_lo, H_hi = 0, "", {unpack(sha2_H_ext512_lo[width])}, {unpack(sha2_H_ext512_hi[width])}
+
+            local function partial(text_part)
+                if text_part then
+                    if tail then
+                        length = length + #text_part
+                        local offs = 0
+                        if tail ~= "" and #tail + #text_part >= 128 then
+                            offs = 128 - #tail
+                            sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, tail..sub(text_part, 1, offs), common_W, 0, 128)
+                            tail = ""
+                        end
+                        local size = #text_part - offs
+                        local size_tail = size % 128
+                        sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, text_part, common_W, offs, size - size_tail)
+                        tail = tail..sub(text_part, #text_part + 1 - size_tail)
+                        return partial
+                    else
+                        error("Adding more chunks is not allowed after asking for final result", 2)
+                    end
+                else
+                    if tail then
+                        local final_blocks = {tail, "\128", string.rep("\0", (-17-length) % 128 + 9)}
+                        tail = nil
+                        -- Assuming user data length is shorter than 2^53 bytes
+                        -- 2^53 bytes = 2^56 bits, so "bit-counter" fits in 7 bytes
+                        length = length * (8 / 256^7)  -- convert "byte-counter" to "bit-counter" and move floating point to the left
+                        for j = 4, 10 do
+                            length = length % 1 * 256
+                            final_blocks[j] = char(floor(length))
+                        end
+                        final_blocks = table.concat(final_blocks)
+                        sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, final_blocks, common_W, 0, #final_blocks)
+                        local max_reg = math.ceil(width / 64)
+                        for j = 1, max_reg do
+                            H_lo[j] = HEX(H_hi[j])..HEX(H_lo[j])
+                        end
+                        H_hi = nil
+                        H_lo = table.concat(H_lo, "", 1, max_reg):sub(1, width / 4)
+                    end
+                    return H_lo
+                end
+            end
+
+            if text then
+                -- Actually perform calculations and return the SHA256 digest of a message
+                return partial(text)()
+            else
+                -- Return function for partial chunk loading
+                -- User should feed every chunks of input data as single argument to this function and receive SHA256 digest by invoking this function without an argument
+                return partial
+            end
+
+        end
+
+
     end
-    local digest = ""
-    for i = 1, 8 do
-        digest = digest..string.format("%08x", state[i])
-    end
-    return digest
+}
+
+persistent["sha_backbone"]()
+
+
+function RoCrypt.sha224(message: string)
+    return sha256ext(224, message)
 end
 
+function RoCrypt.sha256(message: string)
+    return sha256ext(256, message)
+end
 
+function RoCrypt.sha384(message: string)
+    return sha512ext(384, message)
+end
+
+function RoCrypt.sha512(message: string)
+    return sha512ext(512, message)
+end
 
 function RoCrypt.crc32(message: string, hex: boolean?)
     local crc = 0xFFFFFFFF
@@ -112,7 +408,7 @@ function RoCrypt.crc32(message: string, hex: boolean?)
             crc = bxor(rshift(crc, 1), band(polynomial, mask))
         end
     end
-        if hex == true then
+    if hex == true then
         return string.format("%X", bxor(crc, 0xFFFFFFFF))
     elseif not hex or hex == false then
         return bxor(crc, 0xFFFFFFFF)
@@ -538,7 +834,7 @@ function RoCrypt.rsa()
     type bytes 	= {number} -- Type instance of a valid bytes object
 
     -- MAIN ALGORITHM
-   return {
+    return {
         -- Keys generation constructor
         newKeys 	= function(p : number | bigInt, q : bigInt?, e : bigInt?) 			: (bigInt, bigInt,
             bigInt, bigInt, bigInt, bigInt)
@@ -716,7 +1012,203 @@ function RoCrypt.rsa()
             return a
         end
     } -- Returns the library
-    
+
 end
+
+function RoCrypt.base64()
+    local base64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+    local function encode(data)
+        return (data:gsub(".", function(x)
+            local r, b = "", byte(x)
+            for i = 8, 1, -1 do
+                r = r .. (b % 2 ^ i - b % 2 ^ (i - 1) > 0 and "1" or "0")
+            end
+            return r
+        end) .. "0000"):gsub("%d%d%d?%d?%d?%d?", function(x)
+            if #x < 6 then
+                return ""
+            end
+            local c = 0
+            for i = 1, 6 do
+                c = c + (sub(x, i, i) == "1" and 2 ^ (6 - i) or 0)
+            end
+            return sub(base64chars, c + 1, c + 1)
+        end) .. ({ "", "==", "=" })[#data % 3 + 1]
+    end
+
+    local function decode(data)
+        data = string.gsub(data, "[^" .. base64chars .. "=]", "")
+        return (data:gsub(".", function(x)
+            if x == "=" then
+                return ""
+            end
+            local r, f = "", (string.find(base64chars, x) - 1)
+            for i = 6, 1, -1 do
+                r = r .. (f % 2 ^ i - f % 2 ^ (i - 1) > 0 and "1" or "0")
+            end
+            return r
+        end):gsub("%d%d%d?%d?%d?%d?%d?%d?", function(x)
+            if #x ~= 8 then
+                return ""
+            end
+            local c = 0
+            for i = 1, 8 do
+                c = c + (sub(x, i, i) == "1" and 2 ^ (8 - i) or 0)
+            end
+            return char(c)
+        end))
+    end
+
+    return {
+        encode = encode,
+        decode = decode
+    }
+end
+
+function RoCrypt.md5(message: string)
+    local md5_K, md5_sha1_H = {}, {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0}
+    local md5_next_shift = {0, 0, 0, 0, 0, 0, 0, 0, 28, 25, 26, 27, 0, 0, 10, 9, 11, 12, 0, 15, 16, 17, 18, 0, 20, 22, 23, 21}
+
+
+    local function md5_feed_64(H, str, offs, size)
+        -- offs >= 0, size >= 0, size is multiple of 64
+        local W, K, md5_next_shift = persistent["md5"]["common_W"], md5_K, md5_next_shift
+        local h1, h2, h3, h4 = H[1], H[2], H[3], H[4]
+        for pos = offs, offs + size - 1, 64 do
+            for j = 1, 16 do
+                pos = pos + 4
+                local a, b, c, d = string.byte(str, pos - 3, pos)
+                W[j] = ((d * 256 + c) * 256 + b) * 256 + a
+            end
+
+            local a, b, c, d = h1, h2, h3, h4
+            local s = 25
+            for j = 1, 16 do
+                local F = bit32.rrotate(bit32.band(b, c) + bit32.band(-1 - b, d) + a + K[j] + W[j], s) + b
+                s = md5_next_shift[s]
+                a = d
+                d = c
+                c = b
+                b = F
+            end
+
+            s = 27
+            for j = 17, 32 do
+                local F = bit32.rrotate(bit32.band(d, b) + bit32.band(-1 - d, c) + a + K[j] + W[(5 * j - 4) % 16 + 1], s) + b
+                s = md5_next_shift[s]
+                a = d
+                d = c
+                c = b
+                b = F
+            end
+
+            s = 28
+            for j = 33, 48 do
+                local F = bit32.rrotate(bit32.bxor(bit32.bxor(b, c), d) + a + K[j] + W[(3 * j + 2) % 16 + 1], s) + b
+                s = md5_next_shift[s]
+                a = d
+                d = c
+                c = b
+                b = F
+            end
+
+            s = 26
+            for j = 49, 64 do
+                local F = bit32.rrotate(bit32.bxor(c, bit32.bor(b, -1 - d)) + a + K[j] + W[(j * 7 - 7) % 16 + 1], s) + b
+                s = md5_next_shift[s]
+                a = d
+                d = c
+                c = b
+                b = F
+            end
+
+            h1 = (a + h1) % 4294967296
+            h2 = (b + h2) % 4294967296
+            h3 = (c + h3) % 4294967296
+            h4 = (d + h4) % 4294967296
+        end
+
+        H[1], H[2], H[3], H[4] = h1, h2, h3, h4
+    end
+    -- Constants for MD5
+    do
+        for idx = 1, 64 do
+            -- we can't use formula math.floor(abs(sin(idx))*TWO_POW_32) because its result may be beyond integer range on Lua built with 32-bit integers
+            local hi, lo = math.modf(math.abs(math.sin(idx)) * 2^16)
+            md5_K[idx] = hi * 65536 + math.floor(lo * 2^16)
+        end
+    end
+
+
+
+
+
+    -- Create an instance (private objects for current calculation)
+    local H, length, tail = table.create(4), 0, ""
+    H[1], H[2], H[3], H[4] = md5_sha1_H[1], md5_sha1_H[2], md5_sha1_H[3], md5_sha1_H[4]
+
+    local function partial(message_part)
+        if message_part then
+            local partLength = #message_part
+            if tail then
+                length = length + partLength
+                local offs = 0
+                if tail ~= "" and #tail + partLength >= 64 then
+                    offs = 64 - #tail
+                    md5_feed_64(H, tail .. string.sub(message_part, 1, offs), 0, 64)
+                    tail = ""
+                end
+
+                local size = partLength - offs
+                local size_tail = size % 64
+                md5_feed_64(H, message_part, offs, size - size_tail)
+                tail = tail .. string.sub(message_part, partLength + 1 - size_tail)
+                return partial
+            else
+                error("Adding more chunks is not allowed after receiving the result", 2)
+            end
+        else
+            if tail then
+                local final_blocks = table.create(3) --{tail, "\128", string.rep("\0", (-9 - length) % 64)}
+                final_blocks[1] = tail
+                final_blocks[2] = "\128"
+                final_blocks[3] = string.rep("\0", (-9 - length) % 64)
+                tail = nil
+                length = length * 8 -- convert "byte-counter" to "bit-counter"
+                for j = 4, 11 do
+                    local low_byte = length % 256
+                    final_blocks[j] = string.char(low_byte)
+                    length = (length - low_byte) / 256
+                end
+
+                final_blocks = table.concat(final_blocks)
+                md5_feed_64(H, final_blocks, 0, #final_blocks)
+                for j = 1, 4 do
+                    H[j] = string.format("%08x", H[j] % 4294967296)
+                end
+
+                H = string.gsub(table.concat(H), "(..)(..)(..)(..)", "%4%3%2%1")
+            end
+
+            return H
+        end
+    end
+
+    if message then
+        -- Actually perform calculations and return the MD5 digest of a message
+        return partial(message)()
+    else
+        -- Return function for chunk-by-chunk loading
+        -- User should feed every chunk of input data as single argument to this function and finally get MD5 digest by invoking this function without an argument
+        return partial
+    end
+
+
+
+
+end
+
+    
 
 return RoCrypt

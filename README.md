@@ -2,13 +2,21 @@
 
 ## Description
 A pure-Lua (5.1) cryptography module supporting:
-- Functions to calculate SHA digest
-  - SHA-256
-  - SHA-512
+- Cryptographic hash functions (CHF)
+  - MD5
+  - SHA-256, SHA-384, SHA-512
 - Cyclic redundancy checks (CRC) algorithms
   - CRC32
-- And asymmetric algorithms
+- Binary-to-hex encoding algorithms
+  - Base64
+- Asymmetric algorithms
   - RSA
+- UID (unique identifier) algorithms
+  - Snowflake
+
+## Credit
+RobloxGamerPro200007 - RSA function
+Egor-Skriptunoff - Creating the original SHA backbone
 
 ## Usage
 Input data should be a string. Result (SHA digest) is returned in hexadecimal representation as a string of lowercase hex digits.

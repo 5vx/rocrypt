@@ -3,8 +3,8 @@ RoCrypt
 ----------------------------------------------------------------------------------------
 DESCRIPTION:
 	This module contains cryptographic hash functions (CHF)
-	   MD4, MD5 
-	   RIPEMD-160
+	   MD2, MD4, MD5 
+	   RIPEMD-128, RIPEMD-160
 	   SHA-224, SHA-256, SHA-384, SHA-512
 	Cyclic redundancy checks (CRC) algorithms
         CRC32
@@ -42,6 +42,7 @@ USAGE:
 		RoCrypt.base91
 		    .encode()
 		    .decode()
+		RoCrypt.md2()
 		RoCrypt.md4()
 		RoCrypt.md5()
 		RoCrypt.aes
@@ -55,22 +56,28 @@ USAGE:
 		    .encrypt_OFB()
 		    .encrypt_PCBC()
 		    .decrypt_PCBC()
+        RoCrypt.ripemd128()
+        RoCrypt.ripemd160()
 		           
 ----------------------------------------------------------------------------------------
 CREDIT: RobloxGamerPro200007 - RSA, AES function
+github.com/somesocks/lua-lockbox
 --]]--
 
+
+
+RoCrypt = {
+    utils = {}
+}
 
 --[[--
     aliases (so as to save on memory)
 ]]--
-RoCrypt = {
-    utils = {}
-}
+
 band, bxor, bnot, rrotate, rshift, bor, lrotate, lshift = bit32.band, bit32.bxor, bit32.bnot, bit32.rrotate, bit32.rshift, bit32.bor, bit32.lrotate, bit32.lshift
 char, rep, sub, format, byte = string.char, string.rep, string.sub, string.format, string.byte
 floor = math.floor
-bit = bit32
+bit, E = bit32, nil
 persistent = {
     snowflake = {
         id = nil,
@@ -79,7 +86,7 @@ persistent = {
     md5 = {
         common_W = {}
     },
-    sha_backbone = function()
+    sha_backbone = (function()
         local AND_of_two_bytes = {}  -- look-up table (256*256 entries)
         for idx = 0, 65535 do
             local x = idx % 256
@@ -404,12 +411,12 @@ persistent = {
         end
 
 
-    end
+    end)()
 }
 
-persistent["sha_backbone"]()
 
 
+-- @github.com/somesocks/lua-lockbox
 function RoCrypt.utils.queue()
     local Queue = function()
         local queue = {};
@@ -457,7 +464,7 @@ function RoCrypt.utils.queue()
         return public;
     end
 
-    return Queue;
+    return Queue();
 
 end
 
@@ -1242,6 +1249,291 @@ function RoCrypt.base91()
 
 end
 
+function RoCrypt.md2(message)
+    local queue = RoCrypt.utils.queue()
+
+    local SUBST = {
+        0x29, 0x2E, 0x43, 0xC9, 0xA2, 0xD8, 0x7C, 0x01, 0x3D, 0x36, 0x54, 0xA1, 0xEC, 0xF0, 0x06, 0x13,
+        0x62, 0xA7, 0x05, 0xF3, 0xC0, 0xC7, 0x73, 0x8C, 0x98, 0x93, 0x2B, 0xD9, 0xBC, 0x4C, 0x82, 0xCA,
+        0x1E, 0x9B, 0x57, 0x3C, 0xFD, 0xD4, 0xE0, 0x16, 0x67, 0x42, 0x6F, 0x18, 0x8A, 0x17, 0xE5, 0x12,
+        0xBE, 0x4E, 0xC4, 0xD6, 0xDA, 0x9E, 0xDE, 0x49, 0xA0, 0xFB, 0xF5, 0x8E, 0xBB, 0x2F, 0xEE, 0x7A,
+        0xA9, 0x68, 0x79, 0x91, 0x15, 0xB2, 0x07, 0x3F, 0x94, 0xC2, 0x10, 0x89, 0x0B, 0x22, 0x5F, 0x21,
+        0x80, 0x7F, 0x5D, 0x9A, 0x5A, 0x90, 0x32, 0x27, 0x35, 0x3E, 0xCC, 0xE7, 0xBF, 0xF7, 0x97, 0x03,
+        0xFF, 0x19, 0x30, 0xB3, 0x48, 0xA5, 0xB5, 0xD1, 0xD7, 0x5E, 0x92, 0x2A, 0xAC, 0x56, 0xAA, 0xC6,
+        0x4F, 0xB8, 0x38, 0xD2, 0x96, 0xA4, 0x7D, 0xB6, 0x76, 0xFC, 0x6B, 0xE2, 0x9C, 0x74, 0x04, 0xF1,
+        0x45, 0x9D, 0x70, 0x59, 0x64, 0x71, 0x87, 0x20, 0x86, 0x5B, 0xCF, 0x65, 0xE6, 0x2D, 0xA8, 0x02,
+        0x1B, 0x60, 0x25, 0xAD, 0xAE, 0xB0, 0xB9, 0xF6, 0x1C, 0x46, 0x61, 0x69, 0x34, 0x40, 0x7E, 0x0F,
+        0x55, 0x47, 0xA3, 0x23, 0xDD, 0x51, 0xAF, 0x3A, 0xC3, 0x5C, 0xF9, 0xCE, 0xBA, 0xC5, 0xEA, 0x26,
+        0x2C, 0x53, 0x0D, 0x6E, 0x85, 0x28, 0x84, 0x09, 0xD3, 0xDF, 0xCD, 0xF4, 0x41, 0x81, 0x4D, 0x52,
+        0x6A, 0xDC, 0x37, 0xC8, 0x6C, 0xC1, 0xAB, 0xFA, 0x24, 0xE1, 0x7B, 0x08, 0x0C, 0xBD, 0xB1, 0x4A,
+        0x78, 0x88, 0x95, 0x8B, 0xE3, 0x63, 0xE8, 0x6D, 0xE9, 0xCB, 0xD5, 0xFE, 0x3B, 0x00, 0x1D, 0x39,
+        0xF2, 0xEF, 0xB7, 0x0E, 0x66, 0x58, 0xD0, 0xE4, 0xA6, 0x77, 0x72, 0xF8, 0xEB, 0x75, 0x4B, 0x0A,
+        0x31, 0x44, 0x50, 0xB4, 0x8F, 0xED, 0x1F, 0x1A, 0xDB, 0x99, 0x8D, 0x33, 0x9F, 0x11, 0x83, 0x14
+    }
+
+    local XOR = bit32.bxor
+
+    local bytes2word = function(b0, b1, b2, b3)
+        local i = b3; i = bit32.lshift(i, 8)
+        i = bit32.bor(i, b2); i = bit32.lshift(i, 8)
+        i = bit32.bor(i, b1); i = bit32.lshift(i, 8)
+        i = bit32.bor(i, b0)
+        return i
+    end
+
+    local X = {}
+    for i = 0, 47 do
+        X[i] = 0x00
+    end
+    local C = {}
+    for i = 0, 15 do
+        C[i] = 0x00
+    end
+
+    local processBlock = function()
+        local block = {}
+        for i = 0, 15 do
+            block[i] = queue.pop()
+        end
+
+        for i = 0, 15 do
+            X[i + 16] = block[i]
+            X[i + 32] = XOR(X[i], block[i]) --mix
+        end
+
+        local t
+        --update block
+        t = 0
+        for i = 0, 17 do
+            for j = 0, 47 do
+                X[j] = XOR(X[j], SUBST[t + 1])
+                t = X[j]
+            end
+            t = (t + i) % 256
+        end
+
+        --update checksum
+        t = C[15]
+        for i = 0, 15 do
+            C[i] = XOR(C[i], SUBST[XOR(block[i], t) + 1])
+            t = C[i]
+        end
+    end
+
+    queue.reset()
+
+    X = {}
+    for i = 0, 47 do
+        X[i] = 0x00
+    end
+
+    C = {}
+    for i = 0, 15 do
+        C[i] = 0x00
+    end
+
+    for b in string.gmatch(message, ".") do
+        queue.push(string.byte(b))
+        if queue.size() >= 16 then
+            processBlock()
+        end
+    end
+
+    local i = 16 - queue.size()
+    while queue.size() < 16 do
+        queue.push(i)
+    end
+    processBlock()
+
+    queue.push(C[0])
+    queue.push(C[1])
+    queue.push(C[2])
+    queue.push(C[3])
+    queue.push(C[4])
+    queue.push(C[5])
+    queue.push(C[6])
+    queue.push(C[7])
+    queue.push(C[8])
+    queue.push(C[9])
+    queue.push(C[10])
+    queue.push(C[11])
+    queue.push(C[12])
+    queue.push(C[13])
+    queue.push(C[14])
+    queue.push(C[15])
+    processBlock()
+
+    return string.format(
+        "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+        X[0], X[1], X[2], X[3], X[4], X[5], X[6], X[7],
+        X[8], X[9], X[10], X[11], X[12], X[13], X[14], X[15]
+    )
+end
+
+function RoCrypt.md4(message: string)
+
+    local Queue = RoCrypt.utils.queue()
+
+
+
+    local bytes2word = function(b0, b1, b2, b3)
+        local i = b3; i = lshift(i, 8)
+        i = bor(i, b2); i = lshift(i, 8)
+        i = bor(i, b1); i = lshift(i, 8)
+        i = bor(i, b0)
+        return i
+    end
+
+    local word2bytes = function(word)
+        local b0, b1, b2, b3
+        b0 = band(word, 0xFF); word = rshift(word, 8)
+        b1 = band(word, 0xFF); word = rshift(word, 8)
+        b2 = band(word, 0xFF); word = rshift(word, 8)
+        b3 = band(word, 0xFF)
+        return b0, b1, b2, b3
+    end
+
+    local dword2bytes = function(i)
+        local b4, b5, b6, b7 = word2bytes(math.floor(i / 0x100000000))
+        local b0, b1, b2, b3 = word2bytes(i)
+        return b0, b1, b2, b3, b4, b5, b6, b7
+    end
+
+    local F = function(x, y, z) return bor(band(x, y), band(bnot(x), z)) end
+    local G = function(x, y, z) return bor(band(x, y), bor(band(x, z), band(y, z))) end
+    local H = function(x, y, z) return bxor(x, bxor(y, z)) end
+
+    local queue = Queue
+
+     A = 0x67452301
+     B = 0xefcdab89
+     C = 0x98badcfe
+     D = 0x10325476
+
+    local processBlock = function()
+        local a = A
+        local b = B
+        local c = C
+        local d = D
+
+        local X = {}
+
+        for i = 0, 15 do
+            X[i] = bytes2word(queue.pop(), queue.pop(), queue.pop(), queue.pop())
+        end
+
+        a = lrotate(a + F(b, c, d) + X[ 0],  3)
+        d = lrotate(d + F(a, b, c) + X[ 1],  7)
+        c = lrotate(c + F(d, a, b) + X[ 2], 11)
+        b = lrotate(b + F(c, d, a) + X[ 3], 19)
+
+        a = lrotate(a + F(b, c, d) + X[ 4],  3)
+        d = lrotate(d + F(a, b, c) + X[ 5],  7)
+        c = lrotate(c + F(d, a, b) + X[ 6], 11)
+        b = lrotate(b + F(c, d, a) + X[ 7], 19)
+
+        a = lrotate(a + F(b, c, d) + X[ 8],  3)
+        d = lrotate(d + F(a, b, c) + X[ 9],  7)
+        c = lrotate(c + F(d, a, b) + X[10], 11)
+        b = lrotate(b + F(c, d, a) + X[11], 19)
+
+        a = lrotate(a + F(b, c, d) + X[12],  3)
+        d = lrotate(d + F(a, b, c) + X[13],  7)
+        c = lrotate(c + F(d, a, b) + X[14], 11)
+        b = lrotate(b + F(c, d, a) + X[15], 19)
+
+
+        a = lrotate(a + G(b, c, d) + X[ 0] + 0x5A827999,  3)
+        d = lrotate(d + G(a, b, c) + X[ 4] + 0x5A827999,  5)
+        c = lrotate(c + G(d, a, b) + X[ 8] + 0x5A827999,  9)
+        b = lrotate(b + G(c, d, a) + X[12] + 0x5A827999, 13)
+
+        a = lrotate(a + G(b, c, d) + X[ 1] + 0x5A827999,  3)
+        d = lrotate(d + G(a, b, c) + X[ 5] + 0x5A827999,  5)
+        c = lrotate(c + G(d, a, b) + X[ 9] + 0x5A827999,  9)
+        b = lrotate(b + G(c, d, a) + X[13] + 0x5A827999, 13)
+
+        a = lrotate(a + G(b, c, d) + X[ 2] + 0x5A827999,  3)
+        d = lrotate(d + G(a, b, c) + X[ 6] + 0x5A827999,  5)
+        c = lrotate(c + G(d, a, b) + X[10] + 0x5A827999,  9)
+        b = lrotate(b + G(c, d, a) + X[14] + 0x5A827999, 13)
+
+        a = lrotate(a + G(b, c, d) + X[ 3] + 0x5A827999,  3)
+        d = lrotate(d + G(a, b, c) + X[ 7] + 0x5A827999,  5)
+        c = lrotate(c + G(d, a, b) + X[11] + 0x5A827999,  9)
+        b = lrotate(b + G(c, d, a) + X[15] + 0x5A827999, 13)
+
+
+        a = lrotate(a + H(b, c, d) + X[ 0] + 0x6ED9EBA1,  3)
+        d = lrotate(d + H(a, b, c) + X[ 8] + 0x6ED9EBA1,  9)
+        c = lrotate(c + H(d, a, b) + X[ 4] + 0x6ED9EBA1, 11)
+        b = lrotate(b + H(c, d, a) + X[12] + 0x6ED9EBA1, 15)
+
+        a = lrotate(a + H(b, c, d) + X[ 2] + 0x6ED9EBA1,  3)
+        d = lrotate(d + H(a, b, c) + X[10] + 0x6ED9EBA1,  9)
+        c = lrotate(c + H(d, a, b) + X[ 6] + 0x6ED9EBA1, 11)
+        b = lrotate(b + H(c, d, a) + X[14] + 0x6ED9EBA1, 15)
+
+        a = lrotate(a + H(b, c, d) + X[ 1] + 0x6ED9EBA1,  3)
+        d = lrotate(d + H(a, b, c) + X[ 9] + 0x6ED9EBA1,  9)
+        c = lrotate(c + H(d, a, b) + X[ 5] + 0x6ED9EBA1, 11)
+        b = lrotate(b + H(c, d, a) + X[13] + 0x6ED9EBA1, 15)
+
+        a = lrotate(a + H(b, c, d) + X[ 3] + 0x6ED9EBA1,  3)
+        d = lrotate(d + H(a, b, c) + X[11] + 0x6ED9EBA1,  9)
+        c = lrotate(c + H(d, a, b) + X[ 7] + 0x6ED9EBA1, 11)
+        b = lrotate(b + H(c, d, a) + X[15] + 0x6ED9EBA1, 15)
+
+
+        A = band(A + a, 0xFFFFFFFF)
+        B = band(B + b, 0xFFFFFFFF)
+        C = band(C + c, 0xFFFFFFFF)
+        D = band(D + d, 0xFFFFFFFF)
+    end
+
+    queue.reset()
+
+    A = 0x67452301
+    B = 0xefcdab89
+    C = 0x98badcfe
+    D = 0x10325476
+
+    for b in string.gmatch(message, ".") do
+        queue.push(string.byte(b))
+        if queue.size() >= 64 then processBlock() end
+    end
+
+    local bits = queue.getHead() * 8
+
+    queue.push(0x80)
+    while ((queue.size() + 7) % 64) < 63 do
+        queue.push(0x00)
+    end
+
+    local b0, b1, b2, b3, b4, b5, b6, b7 = dword2bytes(bits)
+
+    queue.push(b0)
+    queue.push(b1)
+    queue.push(b2)
+    queue.push(b3)
+    queue.push(b4)
+    queue.push(b5)
+    queue.push(b6)
+    queue.push(b7)
+
+    while queue.size() > 0 do
+        processBlock()
+    end
+
+    local b0, b1, b2, b3 = word2bytes(A)
+    local b4, b5, b6, b7 = word2bytes(B)
+    local b8, b9, b10, b11 = word2bytes(C)
+    local b12, b13, b14, b15 = word2bytes(D)
+
+    return string.format("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+        b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15)
+end
+
 function RoCrypt.md5(message: string)
     local md5_K, md5_sha1_H = {}, {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0}
     local md5_next_shift = {0, 0, 0, 0, 0, 0, 0, 0, 28, 25, 26, 27, 0, 0, 10, 9, 11, 12, 0, 15, 16, 17, 18, 0, 20, 22, 23, 21}
@@ -1385,7 +1677,7 @@ function RoCrypt.md5(message: string)
 
 end
 
-function RoCrypt.aes(message)
+function RoCrypt.aes(message: any?)
     --[[
 ADVANCED ENCRYPTION STANDARD (AES)
 
@@ -1882,7 +2174,7 @@ function RoCrypt.hmac(hash_func, key, message, AsBinary)
     end
 end
 
-function RoCrypt.sha1(message)
+function RoCrypt.sha1(message: string)
     local INIT_0 = 0x67452301
     local INIT_1 = 0xEFCDAB89
     local INIT_2 = 0x98BADCFE
@@ -1942,181 +2234,303 @@ function RoCrypt.sha1(message)
         return message
     end
 
-        local message = preprocessMessage(message)
+    local message = preprocessMessage(message)
 
-        local H0 = INIT_0
-        local H1 = INIT_1
-        local H2 = INIT_2
-        local H3 = INIT_3
-        local H4 = INIT_4
+    local H0 = INIT_0
+    local H1 = INIT_1
+    local H2 = INIT_2
+    local H3 = INIT_3
+    local H4 = INIT_4
 
-        local W = {}
-        for chunkStart = 1, #message, 64 do
-            local place = chunkStart
-            for t = 0, 15 do
-                W[t] = packUint32(string.byte(message, place, place+3))
-                place = place+4
-            end
-            for t = 16, 79 do
-                W[t] = bit32.lrotate(bit32.bxor(W[t-3], W[t-8], W[t-14], W[t-16]), 1)
-            end
-
-            local A, B, C, D, E = H0, H1, H2, H3, H4
-
-            for t = 0, 79 do
-                local TEMP = ( bit32.lrotate(A, 5)+F(t, B, C, D)+E+W[t]+K(t) )%INT_32_CAP
-
-                E, D, C, B, A = D, C, bit32.lrotate(B, 30), A, TEMP
-            end
-
-            H0 = (H0+A)%INT_32_CAP
-            H1 = (H1+B)%INT_32_CAP
-            H2 = (H2+C)%INT_32_CAP
-            H3 = (H3+D)%INT_32_CAP
-            H4 = (H4+E)%INT_32_CAP
+    local W = {}
+    for chunkStart = 1, #message, 64 do
+        local place = chunkStart
+        for t = 0, 15 do
+            W[t] = packUint32(string.byte(message, place, place+3))
+            place = place+4
         end
-        local result = string.format("%08x%08x%08x%08x%08x", H0, H1, H2, H3, H4)
-        return result
+        for t = 16, 79 do
+            W[t] = bit32.lrotate(bit32.bxor(W[t-3], W[t-8], W[t-14], W[t-16]), 1)
+        end
+
+        local A, B, C, D, E = H0, H1, H2, H3, H4
+
+        for t = 0, 79 do
+            local TEMP = ( bit32.lrotate(A, 5)+F(t, B, C, D)+E+W[t]+K(t) )%INT_32_CAP
+
+            E, D, C, B, A = D, C, bit32.lrotate(B, 30), A, TEMP
+        end
+
+        H0 = (H0+A)%INT_32_CAP
+        H1 = (H1+B)%INT_32_CAP
+        H2 = (H2+C)%INT_32_CAP
+        H3 = (H3+D)%INT_32_CAP
+        H4 = (H4+E)%INT_32_CAP
+    end
+    local result = string.format("%08x%08x%08x%08x%08x", H0, H1, H2, H3, H4)
+    return result
 
 
 end
 
-function RoCrypt.md4(byteString)
-    
-    local Queue = RoCrypt.utils.queue()
-    
 
+function RoCrypt.ripemd128(message: string)
+    local bytes2word = function(b0, b1, b2, b3)
+        local i = b3; i = lshift(i, 8)
+        i = bor(i, b2); i = lshift(i, 8)
+        i = bor(i, b1); i = lshift(i, 8)
+        i = bor(i, b0)
+        return i
+    end
 
-        local bytes2word = function(b0, b1, b2, b3)
-            local i = b3; i = lshift(i, 8)
-            i = bor(i, b2); i = lshift(i, 8)
-            i = bor(i, b1); i = lshift(i, 8)
-            i = bor(i, b0)
-            return i
+    local word2bytes = function(word)
+        local b0, b1, b2, b3
+        b0 = band(word, 0xFF); word = rshift(word, 8)
+        b1 = band(word, 0xFF); word = rshift(word, 8)
+        b2 = band(word, 0xFF); word = rshift(word, 8)
+        b3 = band(word, 0xFF)
+        return b0, b1, b2, b3
+    end
+
+    local dword2bytes = function(i)
+        local b4, b5, b6, b7 = word2bytes(math.floor(i / 0x100000000))
+        local b0, b1, b2, b3 = word2bytes(i)
+        return b0, b1, b2, b3, b4, b5, b6, b7
+    end
+
+    local F = function(x, y, z) return bxor(x, bxor(y, z)) end
+    local G = function(x, y, z) return bor(band(x, y), band(bnot(x), z)) end
+    local H = function(x, y, z) return bxor(bor(x, bnot(y)), z) end
+    local I = function(x, y, z) return bor(band(x, z), band(y, bnot(z))) end
+
+    local FF = function(a, b, c, d, x, s)
+        a = a + F(b, c, d) + x
+        a = lrotate(a, s)
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local GG = function(a, b, c, d, x, s)
+        a = a + G(b, c, d) + x + 0x5a827999
+        a = lrotate(a, s)
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local HH = function(a, b, c, d, x, s)
+        a = a + H(b, c, d) + x + 0x6ed9eba1
+        a = lrotate(a, s)
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local II = function(a, b, c, d, x, s)
+        a = a + I(b, c, d) + x + 0x8f1bbcdc
+        a = lrotate(a, s)
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local FFF = function(a, b, c, d, x, s)
+        a = a + F(b, c, d) + x
+        a = lrotate(a, s)
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local GGG = function(a, b, c, d, x, s)
+        a = a + G(b, c, d) + x + 0x6d703ef3
+        a = lrotate(a, s)
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local HHH = function(a, b, c, d, x, s)
+        a = a + H(b, c, d) + x + 0x5c4dd124
+        a = lrotate(a, s)
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local III = function(a, b, c, d, x, s)
+        a = a + I(b, c, d) + x + 0x50a28be6
+        a = lrotate(a, s)
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local queue = RoCrypt.utils.queue()
+
+    local processBlock = function()
+        local aa, bb, cc, dd = A, B, C, D
+        local aaa, bbb, ccc, ddd = A, B, C, D
+
+        local X = {}
+
+        for i = 0, 15 do
+            X[i] = bytes2word(queue.pop(), queue.pop(), queue.pop(), queue.pop())
         end
 
-        local word2bytes = function(word)
-            local b0, b1, b2, b3
-            b0 = band(word, 0xFF); word = rshift(word, 8)
-            b1 = band(word, 0xFF); word = rshift(word, 8)
-            b2 = band(word, 0xFF); word = rshift(word, 8)
-            b3 = band(word, 0xFF)
-            return b0, b1, b2, b3
-        end
+        aa = FF(aa, bb, cc, dd, X[ 0], 11)
+        dd = FF(dd, aa, bb, cc, X[ 1], 14)
+        cc = FF(cc, dd, aa, bb, X[ 2], 15)
+        bb = FF(bb, cc, dd, aa, X[ 3], 12)
+        aa = FF(aa, bb, cc, dd, X[ 4],  5)
+        dd = FF(dd, aa, bb, cc, X[ 5],  8)
+        cc = FF(cc, dd, aa, bb, X[ 6],  7)
+        bb = FF(bb, cc, dd, aa, X[ 7],  9)
+        aa = FF(aa, bb, cc, dd, X[ 8], 11)
+        dd = FF(dd, aa, bb, cc, X[ 9], 13)
+        cc = FF(cc, dd, aa, bb, X[10], 14)
+        bb = FF(bb, cc, dd, aa, X[11], 15)
+        aa = FF(aa, bb, cc, dd, X[12],  6)
+        dd = FF(dd, aa, bb, cc, X[13],  7)
+        cc = FF(cc, dd, aa, bb, X[14],  9)
+        bb = FF(bb, cc, dd, aa, X[15],  8)
 
-        local dword2bytes = function(i)
-            local b4, b5, b6, b7 = word2bytes(math.floor(i / 0x100000000))
-            local b0, b1, b2, b3 = word2bytes(i)
-            return b0, b1, b2, b3, b4, b5, b6, b7
-        end
+        aa = GG(aa, bb, cc, dd, X[ 7],  7)
+        dd = GG(dd, aa, bb, cc, X[ 4],  6)
+        cc = GG(cc, dd, aa, bb, X[13],  8)
+        bb = GG(bb, cc, dd, aa, X[ 1], 13)
+        aa = GG(aa, bb, cc, dd, X[10], 11)
+        dd = GG(dd, aa, bb, cc, X[ 6],  9)
+        cc = GG(cc, dd, aa, bb, X[15],  7)
+        bb = GG(bb, cc, dd, aa, X[ 3], 15)
+        aa = GG(aa, bb, cc, dd, X[12],  7)
+        dd = GG(dd, aa, bb, cc, X[ 0], 12)
+        cc = GG(cc, dd, aa, bb, X[ 9], 15)
+        bb = GG(bb, cc, dd, aa, X[ 5],  9)
+        aa = GG(aa, bb, cc, dd, X[ 2], 11)
+        dd = GG(dd, aa, bb, cc, X[14],  7)
+        cc = GG(cc, dd, aa, bb, X[11], 13)
+        bb = GG(bb, cc, dd, aa, X[ 8], 12)
 
-        local F = function(x, y, z) return bor(band(x, y), band(bnot(x), z)) end
-        local G = function(x, y, z) return bor(band(x, y), bor(band(x, z), band(y, z))) end
-        local H = function(x, y, z) return bxor(x, bxor(y, z)) end
+        aa = HH(aa, bb, cc, dd, X[ 3], 11)
+        dd = HH(dd, aa, bb, cc, X[10], 13)
+        cc = HH(cc, dd, aa, bb, X[14],  6)
+        bb = HH(bb, cc, dd, aa, X[ 4],  7)
+        aa = HH(aa, bb, cc, dd, X[ 9], 14)
+        dd = HH(dd, aa, bb, cc, X[15],  9)
+        cc = HH(cc, dd, aa, bb, X[ 8], 13)
+        bb = HH(bb, cc, dd, aa, X[ 1], 15)
+        aa = HH(aa, bb, cc, dd, X[ 2], 14)
+        dd = HH(dd, aa, bb, cc, X[ 7],  8)
+        cc = HH(cc, dd, aa, bb, X[ 0], 13)
+        bb = HH(bb, cc, dd, aa, X[ 6],  6)
+        aa = HH(aa, bb, cc, dd, X[13],  5)
+        dd = HH(dd, aa, bb, cc, X[11], 12)
+        cc = HH(cc, dd, aa, bb, X[ 5],  7)
+        bb = HH(bb, cc, dd, aa, X[12],  5)
 
-        local queue = Queue()
+        aa = II(aa, bb, cc, dd, X[ 1], 11)
+        dd = II(dd, aa, bb, cc, X[ 9], 12)
+        cc = II(cc, dd, aa, bb, X[11], 14)
+        bb = II(bb, cc, dd, aa, X[10], 15)
+        aa = II(aa, bb, cc, dd, X[ 0], 14)
+        dd = II(dd, aa, bb, cc, X[ 8], 15)
+        cc = II(cc, dd, aa, bb, X[12],  9)
+        bb = II(bb, cc, dd, aa, X[ 4],  8)
+        aa = II(aa, bb, cc, dd, X[13],  9)
+        dd = II(dd, aa, bb, cc, X[ 3], 14)
+        cc = II(cc, dd, aa, bb, X[ 7],  5)
+        bb = II(bb, cc, dd, aa, X[15],  6)
+        aa = II(aa, bb, cc, dd, X[14],  8)
+        dd = II(dd, aa, bb, cc, X[ 5],  6)
+        cc = II(cc, dd, aa, bb, X[ 6],  5)
+        bb = II(bb, cc, dd, aa, X[ 2], 12)
 
-        local A = 0x67452301
-        local B = 0xefcdab89
-        local C = 0x98badcfe
-        local D = 0x10325476
+        aaa = III(aaa, bbb, ccc, ddd, X[ 5],  8)
+        ddd = III(ddd, aaa, bbb, ccc, X[14],  9)
+        ccc = III(ccc, ddd, aaa, bbb, X[ 7],  9)
+        bbb = III(bbb, ccc, ddd, aaa, X[ 0], 11)
+        aaa = III(aaa, bbb, ccc, ddd, X[ 9], 13)
+        ddd = III(ddd, aaa, bbb, ccc, X[ 2], 15)
+        ccc = III(ccc, ddd, aaa, bbb, X[11], 15)
+        bbb = III(bbb, ccc, ddd, aaa, X[ 4],  5)
+        aaa = III(aaa, bbb, ccc, ddd, X[13],  7)
+        ddd = III(ddd, aaa, bbb, ccc, X[ 6],  7)
+        ccc = III(ccc, ddd, aaa, bbb, X[15],  8)
+        bbb = III(bbb, ccc, ddd, aaa, X[ 8], 11)
+        aaa = III(aaa, bbb, ccc, ddd, X[ 1], 14)
+        ddd = III(ddd, aaa, bbb, ccc, X[10], 14)
+        ccc = III(ccc, ddd, aaa, bbb, X[ 3], 12)
+        bbb = III(bbb, ccc, ddd, aaa, X[12],  6)
 
-        local processBlock = function()
-            local a = A
-            local b = B
-            local c = C
-            local d = D
+        aaa = HHH(aaa, bbb, ccc, ddd, X[ 6],  9)
+        ddd = HHH(ddd, aaa, bbb, ccc, X[11], 13)
+        ccc = HHH(ccc, ddd, aaa, bbb, X[ 3], 15)
+        bbb = HHH(bbb, ccc, ddd, aaa, X[ 7],  7)
+        aaa = HHH(aaa, bbb, ccc, ddd, X[ 0], 12)
+        ddd = HHH(ddd, aaa, bbb, ccc, X[13],  8)
+        ccc = HHH(ccc, ddd, aaa, bbb, X[ 5],  9)
+        bbb = HHH(bbb, ccc, ddd, aaa, X[10], 11)
+        aaa = HHH(aaa, bbb, ccc, ddd, X[14],  7)
+        ddd = HHH(ddd, aaa, bbb, ccc, X[15],  7)
+        ccc = HHH(ccc, ddd, aaa, bbb, X[ 8], 12)
+        bbb = HHH(bbb, ccc, ddd, aaa, X[12],  7)
+        aaa = HHH(aaa, bbb, ccc, ddd, X[ 4],  6)
+        ddd = HHH(ddd, aaa, bbb, ccc, X[ 9], 15)
+        ccc = HHH(ccc, ddd, aaa, bbb, X[ 1], 13)
+        bbb = HHH(bbb, ccc, ddd, aaa, X[ 2], 11)
 
-            local X = {}
+        aaa = GGG(aaa, bbb, ccc, ddd, X[15],  9)
+        ddd = GGG(ddd, aaa, bbb, ccc, X[ 5],  7)
+        ccc = GGG(ccc, ddd, aaa, bbb, X[ 1], 15)
+        bbb = GGG(bbb, ccc, ddd, aaa, X[ 3], 11)
+        aaa = GGG(aaa, bbb, ccc, ddd, X[ 7],  8)
+        ddd = GGG(ddd, aaa, bbb, ccc, X[14],  6)
+        ccc = GGG(ccc, ddd, aaa, bbb, X[ 6],  6)
+        bbb = GGG(bbb, ccc, ddd, aaa, X[ 9], 14)
+        aaa = GGG(aaa, bbb, ccc, ddd, X[11], 12)
+        ddd = GGG(ddd, aaa, bbb, ccc, X[ 8], 13)
+        ccc = GGG(ccc, ddd, aaa, bbb, X[12],  5)
+        bbb = GGG(bbb, ccc, ddd, aaa, X[ 2], 14)
+        aaa = GGG(aaa, bbb, ccc, ddd, X[10], 13)
+        ddd = GGG(ddd, aaa, bbb, ccc, X[ 0], 13)
+        ccc = GGG(ccc, ddd, aaa, bbb, X[ 4],  7)
+        bbb = GGG(bbb, ccc, ddd, aaa, X[13],  5)
 
-            for i = 0, 15 do
-                X[i] = bytes2word(queue.pop(), queue.pop(), queue.pop(), queue.pop())
-            end
-
-            a = lrotate(a + F(b, c, d) + X[ 0],  3)
-            d = lrotate(d + F(a, b, c) + X[ 1],  7)
-            c = lrotate(c + F(d, a, b) + X[ 2], 11)
-            b = lrotate(b + F(c, d, a) + X[ 3], 19)
-
-            a = lrotate(a + F(b, c, d) + X[ 4],  3)
-            d = lrotate(d + F(a, b, c) + X[ 5],  7)
-            c = lrotate(c + F(d, a, b) + X[ 6], 11)
-            b = lrotate(b + F(c, d, a) + X[ 7], 19)
-
-            a = lrotate(a + F(b, c, d) + X[ 8],  3)
-            d = lrotate(d + F(a, b, c) + X[ 9],  7)
-            c = lrotate(c + F(d, a, b) + X[10], 11)
-            b = lrotate(b + F(c, d, a) + X[11], 19)
-
-            a = lrotate(a + F(b, c, d) + X[12],  3)
-            d = lrotate(d + F(a, b, c) + X[13],  7)
-            c = lrotate(c + F(d, a, b) + X[14], 11)
-            b = lrotate(b + F(c, d, a) + X[15], 19)
-
-
-            a = lrotate(a + G(b, c, d) + X[ 0] + 0x5A827999,  3)
-            d = lrotate(d + G(a, b, c) + X[ 4] + 0x5A827999,  5)
-            c = lrotate(c + G(d, a, b) + X[ 8] + 0x5A827999,  9)
-            b = lrotate(b + G(c, d, a) + X[12] + 0x5A827999, 13)
-
-            a = lrotate(a + G(b, c, d) + X[ 1] + 0x5A827999,  3)
-            d = lrotate(d + G(a, b, c) + X[ 5] + 0x5A827999,  5)
-            c = lrotate(c + G(d, a, b) + X[ 9] + 0x5A827999,  9)
-            b = lrotate(b + G(c, d, a) + X[13] + 0x5A827999, 13)
-
-            a = lrotate(a + G(b, c, d) + X[ 2] + 0x5A827999,  3)
-            d = lrotate(d + G(a, b, c) + X[ 6] + 0x5A827999,  5)
-            c = lrotate(c + G(d, a, b) + X[10] + 0x5A827999,  9)
-            b = lrotate(b + G(c, d, a) + X[14] + 0x5A827999, 13)
-
-            a = lrotate(a + G(b, c, d) + X[ 3] + 0x5A827999,  3)
-            d = lrotate(d + G(a, b, c) + X[ 7] + 0x5A827999,  5)
-            c = lrotate(c + G(d, a, b) + X[11] + 0x5A827999,  9)
-            b = lrotate(b + G(c, d, a) + X[15] + 0x5A827999, 13)
-
-
-            a = lrotate(a + H(b, c, d) + X[ 0] + 0x6ED9EBA1,  3)
-            d = lrotate(d + H(a, b, c) + X[ 8] + 0x6ED9EBA1,  9)
-            c = lrotate(c + H(d, a, b) + X[ 4] + 0x6ED9EBA1, 11)
-            b = lrotate(b + H(c, d, a) + X[12] + 0x6ED9EBA1, 15)
-
-            a = lrotate(a + H(b, c, d) + X[ 2] + 0x6ED9EBA1,  3)
-            d = lrotate(d + H(a, b, c) + X[10] + 0x6ED9EBA1,  9)
-            c = lrotate(c + H(d, a, b) + X[ 6] + 0x6ED9EBA1, 11)
-            b = lrotate(b + H(c, d, a) + X[14] + 0x6ED9EBA1, 15)
-
-            a = lrotate(a + H(b, c, d) + X[ 1] + 0x6ED9EBA1,  3)
-            d = lrotate(d + H(a, b, c) + X[ 9] + 0x6ED9EBA1,  9)
-            c = lrotate(c + H(d, a, b) + X[ 5] + 0x6ED9EBA1, 11)
-            b = lrotate(b + H(c, d, a) + X[13] + 0x6ED9EBA1, 15)
-
-            a = lrotate(a + H(b, c, d) + X[ 3] + 0x6ED9EBA1,  3)
-            d = lrotate(d + H(a, b, c) + X[11] + 0x6ED9EBA1,  9)
-            c = lrotate(c + H(d, a, b) + X[ 7] + 0x6ED9EBA1, 11)
-            b = lrotate(b + H(c, d, a) + X[15] + 0x6ED9EBA1, 15)
+        aaa = FFF(aaa, bbb, ccc, ddd, X[ 8], 15)
+        ddd = FFF(ddd, aaa, bbb, ccc, X[ 6],  5)
+        ccc = FFF(ccc, ddd, aaa, bbb, X[ 4],  8)
+        bbb = FFF(bbb, ccc, ddd, aaa, X[ 1], 11) aaa = FFF(aaa, bbb, ccc, ddd, X[ 3], 14)
+        ddd = FFF(ddd, aaa, bbb, ccc, X[11], 14)
+        ccc = FFF(ccc, ddd, aaa, bbb, X[15],  6)
+        bbb = FFF(bbb, ccc, ddd, aaa, X[ 0], 14)
+        aaa = FFF(aaa, bbb, ccc, ddd, X[ 5],  6)
+        ddd = FFF(ddd, aaa, bbb, ccc, X[12],  9)
+        ccc = FFF(ccc, ddd, aaa, bbb, X[ 2], 12)
+        bbb = FFF(bbb, ccc, ddd, aaa, X[13],  9)
+        aaa = FFF(aaa, bbb, ccc, ddd, X[ 9], 12)
+        ddd = FFF(ddd, aaa, bbb, ccc, X[ 7],  5)
+        ccc = FFF(ccc, ddd, aaa, bbb, X[10], 15)
+        bbb = FFF(bbb, ccc, ddd, aaa, X[14],  8)
 
 
-            A = band(A + a, 0xFFFFFFFF)
-            B = band(B + b, 0xFFFFFFFF)
-            C = band(C + c, 0xFFFFFFFF)
-            D = band(D + d, 0xFFFFFFFF)
-        end
+        A, B, C, D = band(B + cc + ddd, 0xFFFFFFFF), band(C + dd + aaa, 0xFFFFFFFF), band(D + aa + bbb, 0xFFFFFFFF), band(A + bb + ccc, 0xFFFFFFFF)
+    end
 
+    local init = function()
         queue.reset()
 
         A = 0x67452301
         B = 0xefcdab89
         C = 0x98badcfe
         D = 0x10325476
+    end
 
-        for b in string.gmatch(byteString, ".") do
-            queue.push(string.byte(b))
+    local update = function(bytes)
+        for i = 1, #bytes do
+            queue.push(bytes:byte(i))
             if queue.size() >= 64 then processBlock() end
         end
+    end
 
+    local finish = function()
         local bits = queue.getHead() * 8
 
         queue.push(0x80)
+
         while ((queue.size() + 7) % 64) < 63 do
             queue.push(0x00)
         end
@@ -2135,235 +2549,212 @@ function RoCrypt.md4(byteString)
         while queue.size() > 0 do
             processBlock()
         end
+    end
 
+    local asHex = function()
         local b0, b1, b2, b3 = word2bytes(A)
         local b4, b5, b6, b7 = word2bytes(B)
         local b8, b9, b10, b11 = word2bytes(C)
         local b12, b13, b14, b15 = word2bytes(D)
 
-        return string.format("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
-            b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15)
+        local fmt = "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
+
+        return string.format(fmt,
+            b0, b1, b2, b3, b4, b5, b6, b7, b8, b9,
+            b10, b11, b12, b13, b14, b15)
+    end
+
+    init()
+    update(message)
+    finish()
+
+    return asHex()
 end
+          
+function RoCrypt.ripemd160(message: string)
 
-function RoCrypt.ripemd160(data)
 
+    local bytes2word = function(b0, b1, b2, b3)
+        local i = b3; i = lshift(i, 8)
+        i = bor(i, b2); i = lshift(i, 8)
+        i = bor(i, b1); i = lshift(i, 8)
+        i = bor(i, b0)
+        return i
+    end
 
-        local bytes2word = function(b0, b1, b2, b3)
-            local i = b3; i = lshift(i, 8)
-            i = bor(i, b2); i = lshift(i, 8)
-            i = bor(i, b1); i = lshift(i, 8)
-            i = bor(i, b0)
-            return i
+    local word2bytes = function(word)
+        local b0, b1, b2, b3
+        b0 = band(word, 0xFF); word = rshift(word, 8)
+        b1 = band(word, 0xFF); word = rshift(word, 8)
+        b2 = band(word, 0xFF); word = rshift(word, 8)
+        b3 = band(word, 0xFF)
+        return b0, b1, b2, b3
+    end
+
+    local dword2bytes = function(i)
+        local b4, b5, b6, b7 = word2bytes(math.floor(i / 0x100000000))
+        local b0, b1, b2, b3 = word2bytes(i)
+        return b0, b1, b2, b3, b4, b5, b6, b7
+    end
+
+    local F = function(x, y, z) return bxor(x, bxor(y, z)) end
+    local G = function(x, y, z) return bor(band(x, y), band(bnot(x), z)) end
+    local H = function(x, y, z) return bxor(bor(x, bnot(y)), z) end
+    local I = function(x, y, z) return bor(band(x, z), band(y, bnot(z))) end
+    local J = function(x, y, z) return bxor(x, bor(y, bnot(z))) end
+
+    local FF = function(a, b, c, d, e, x, s)
+        a = a + F(b, c, d) + x
+        a = lrotate(a, s) + e
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local GG = function(a, b, c, d, e, x, s)
+        a = a + G(b, c, d) + x + 0x5a827999
+        a = lrotate(a, s) + e
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local HH = function(a, b, c, d, e, x, s)
+        a = a + H(b, c, d) + x + 0x6ed9eba1
+        a = lrotate(a, s) + e
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local II = function(a, b, c, d, e, x, s)
+        a = a + I(b, c, d) + x + 0x8f1bbcdc
+        a = lrotate(a, s) + e
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local JJ = function(a, b, c, d, e, x, s)
+        a = a + J(b, c, d) + x + 0xa953fd4e
+        a = lrotate(a, s) + e
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local FFF = function(a, b, c, d, e, x, s)
+        a = a + F(b, c, d) + x
+        a = lrotate(a, s) + e
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local GGG = function(a, b, c, d, e, x, s)
+        a = a + G(b, c, d) + x + 0x7a6d76e9
+        a = lrotate(a, s) + e
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local HHH = function(a, b, c, d, e, x, s)
+        a = a + H(b, c, d) + x + 0x6d703ef3
+        a = lrotate(a, s) + e
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local III = function(a, b, c, d, e, x, s)
+        a = a + I(b, c, d) + x + 0x5c4dd124
+        a = lrotate(a, s) + e
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+    local JJJ = function(a, b, c, d, e, x, s)
+        a = a + J(b, c, d) + x + 0x50a28be6
+        a = lrotate(a, s) + e
+        a = band(a, 0xFFFFFFFF)
+        return a
+    end
+
+        local queue = RoCrypt.utils.queue()
+
+    local processBlock = function()
+        
+        local aa, bb, cc, dd, ee = A, B, C, D, E
+        local aaa, bbb, ccc, ddd, eee = A, B, C, D, E
+
+        local X = {}
+
+        for i = 0, 15 do
+            X[i] = bytes2word(queue.pop(), queue.pop(), queue.pop(), queue.pop())
         end
 
-        local word2bytes = function(word)
-            local b0, b1, b2, b3
-            b0 = band(word, 0xFF); word = rshift(word, 8)
-            b1 = band(word, 0xFF); word = rshift(word, 8)
-            b2 = band(word, 0xFF); word = rshift(word, 8)
-            b3 = band(word, 0xFF)
-            return b0, b1, b2, b3
-        end
+        aa, cc = FF(aa, bb, cc, dd, ee, X[ 0], 11), lrotate(cc, 10)
+        ee, bb = FF(ee, aa, bb, cc, dd, X[ 1], 14), lrotate(bb, 10)
+        dd, aa = FF(dd, ee, aa, bb, cc, X[ 2], 15), lrotate(aa, 10)
+        cc, ee = FF(cc, dd, ee, aa, bb, X[ 3], 12), lrotate(ee, 10)
+        bb, dd = FF(bb, cc, dd, ee, aa, X[ 4],  5), lrotate(dd, 10)
+        aa, cc = FF(aa, bb, cc, dd, ee, X[ 5],  8), lrotate(cc, 10)
+        ee, bb = FF(ee, aa, bb, cc, dd, X[ 6],  7), lrotate(bb, 10)
+        dd, aa = FF(dd, ee, aa, bb, cc, X[ 7],  9), lrotate(aa, 10)
+        cc, ee = FF(cc, dd, ee, aa, bb, X[ 8], 11), lrotate(ee, 10)
+        bb, dd = FF(bb, cc, dd, ee, aa, X[ 9], 13), lrotate(dd, 10)
+        aa, cc = FF(aa, bb, cc, dd, ee, X[10], 14), lrotate(cc, 10)
+        ee, bb = FF(ee, aa, bb, cc, dd, X[11], 15), lrotate(bb, 10)
+        dd, aa = FF(dd, ee, aa, bb, cc, X[12],  6), lrotate(aa, 10)
+        cc, ee = FF(cc, dd, ee, aa, bb, X[13],  7), lrotate(ee, 10)
+        bb, dd = FF(bb, cc, dd, ee, aa, X[14],  9), lrotate(dd, 10)
+        aa, cc = FF(aa, bb, cc, dd, ee, X[15],  8), lrotate(cc, 10)
 
-        local dword2bytes = function(i)
-            local b4, b5, b6, b7 = word2bytes(math.floor(i / 0x100000000))
-            local b0, b1, b2, b3 = word2bytes(i)
-            return b0, b1, b2, b3, b4, b5, b6, b7
-        end
+        ee, bb = GG(ee, aa, bb, cc, dd, X[ 7],  7), lrotate(bb, 10)
+        dd, aa = GG(dd, ee, aa, bb, cc, X[ 4],  6), lrotate(aa, 10)
+        cc, ee = GG(cc, dd, ee, aa, bb, X[13],  8), lrotate(ee, 10)
+        bb, dd = GG(bb, cc, dd, ee, aa, X[ 1], 13), lrotate(dd, 10)
+        aa, cc = GG(aa, bb, cc, dd, ee, X[10], 11), lrotate(cc, 10)
+        ee, bb = GG(ee, aa, bb, cc, dd, X[ 6],  9), lrotate(bb, 10)
+        dd, aa = GG(dd, ee, aa, bb, cc, X[15],  7), lrotate(aa, 10)
+        cc, ee = GG(cc, dd, ee, aa, bb, X[ 3], 15), lrotate(ee, 10)
+        bb, dd = GG(bb, cc, dd, ee, aa, X[12],  7), lrotate(dd, 10)
+        aa, cc = GG(aa, bb, cc, dd, ee, X[ 0], 12), lrotate(cc, 10)
+        ee, bb = GG(ee, aa, bb, cc, dd, X[ 9], 15), lrotate(bb, 10)
+        dd, aa = GG(dd, ee, aa, bb, cc, X[ 5],  9), lrotate(aa, 10)
+        cc, ee = GG(cc, dd, ee, aa, bb, X[ 2], 11), lrotate(ee, 10)
+        bb, dd = GG(bb, cc, dd, ee, aa, X[14],  7), lrotate(dd, 10)
+        aa, cc = GG(aa, bb, cc, dd, ee, X[11], 13), lrotate(cc, 10)
+        ee, bb = GG(ee, aa, bb, cc, dd, X[ 8], 12), lrotate(bb, 10)
 
-        local F = function(x, y, z) return bxor(x, bxor(y, z)) end
-        local G = function(x, y, z) return bor(band(x, y), band(bnot(x), z)) end
-        local H = function(x, y, z) return bxor(bor(x, bnot(y)), z) end
-        local I = function(x, y, z) return bor(band(x, z), band(y, bnot(z))) end
-        local J = function(x, y, z) return bxor(x, bor(y, bnot(z))) end
+        dd, aa = HH(dd, ee, aa, bb, cc, X[ 3], 11), lrotate(aa, 10)
+        cc, ee = HH(cc, dd, ee, aa, bb, X[10], 13), lrotate(ee, 10)
+        bb, dd = HH(bb, cc, dd, ee, aa, X[14],  6), lrotate(dd, 10)
+        aa, cc = HH(aa, bb, cc, dd, ee, X[ 4],  7), lrotate(cc, 10)
+        ee, bb = HH(ee, aa, bb, cc, dd, X[ 9], 14), lrotate(bb, 10)
+        dd, aa = HH(dd, ee, aa, bb, cc, X[15],  9), lrotate(aa, 10)
+        cc, ee = HH(cc, dd, ee, aa, bb, X[ 8], 13), lrotate(ee, 10)
+        bb, dd = HH(bb, cc, dd, ee, aa, X[ 1], 15), lrotate(dd, 10)
+        aa, cc = HH(aa, bb, cc, dd, ee, X[ 2], 14), lrotate(cc, 10)
+        ee, bb = HH(ee, aa, bb, cc, dd, X[ 7],  8), lrotate(bb, 10)
+        dd, aa = HH(dd, ee, aa, bb, cc, X[ 0], 13), lrotate(aa, 10)
+        cc, ee = HH(cc, dd, ee, aa, bb, X[ 6],  6), lrotate(ee, 10)
+        bb, dd = HH(bb, cc, dd, ee, aa, X[13],  5), lrotate(dd, 10)
+        aa, cc = HH(aa, bb, cc, dd, ee, X[11], 12), lrotate(cc, 10)
+        ee, bb = HH(ee, aa, bb, cc, dd, X[ 5],  7), lrotate(bb, 10)
+        dd, aa = HH(dd, ee, aa, bb, cc, X[12],  5), lrotate(aa, 10)
 
-        local FF = function(a, b, c, d, e, x, s)
-            a = a + F(b, c, d) + x
-            a = lrotate(a, s) + e
-            a = band(a, 0xFFFFFFFF)
-            return a
-        end
+        cc, ee = II(cc, dd, ee, aa, bb, X[ 1], 11), lrotate(ee, 10)
+        bb, dd = II(bb, cc, dd, ee, aa, X[ 9], 12), lrotate(dd, 10)
+        aa, cc = II(aa, bb, cc, dd, ee, X[11], 14), lrotate(cc, 10)
+        ee, bb = II(ee, aa, bb, cc, dd, X[10], 15), lrotate(bb, 10)
+        dd, aa = II(dd, ee, aa, bb, cc, X[ 0], 14), lrotate(aa, 10)
+        cc, ee = II(cc, dd, ee, aa, bb, X[ 8], 15), lrotate(ee, 10)
+        bb, dd = II(bb, cc, dd, ee, aa, X[12],  9), lrotate(dd, 10)
+        aa, cc = II(aa, bb, cc, dd, ee, X[ 4],  8), lrotate(cc, 10)
+        ee, bb = II(ee, aa, bb, cc, dd, X[13],  9), lrotate(bb, 10)
+        dd, aa = II(dd, ee, aa, bb, cc, X[ 3], 14), lrotate(aa, 10)
+        cc, ee = II(cc, dd, ee, aa, bb, X[ 7],  5), lrotate(ee, 10)
+        bb, dd = II(bb, cc, dd, ee, aa, X[15],  6), lrotate(dd, 10)
+        aa, cc = II(aa, bb, cc, dd, ee, X[14],  8), lrotate(cc, 10)
+        ee, bb = II(ee, aa, bb, cc, dd, X[ 5],  6), lrotate(bb, 10)
+        dd, aa = II(dd, ee, aa, bb, cc, X[ 6],  5), lrotate(aa, 10)
+        cc, ee = II(cc, dd, ee, aa, bb, X[ 2], 12), lrotate(ee, 10)
 
-        local GG = function(a, b, c, d, e, x, s)
-            a = a + G(b, c, d) + x + 0x5a827999
-            a = lrotate(a, s) + e
-            a = band(a, 0xFFFFFFFF)
-            return a
-        end
-
-        local HH = function(a, b, c, d, e, x, s)
-            a = a + H(b, c, d) + x + 0x6ed9eba1
-            a = lrotate(a, s) + e
-            a = band(a, 0xFFFFFFFF)
-            return a
-        end
-
-        local II = function(a, b, c, d, e, x, s)
-            a = a + I(b, c, d) + x + 0x8f1bbcdc
-            a = lrotate(a, s) + e
-            a = band(a, 0xFFFFFFFF)
-            return a
-        end
-
-        local JJ = function(a, b, c, d, e, x, s)
-            a = a + J(b, c, d) + x + 0xa953fd4e
-            a = lrotate(a, s) + e
-            a = band(a, 0xFFFFFFFF)
-            return a
-        end
-
-        local FFF = function(a, b, c, d, e, x, s)
-            a = a + F(b, c, d) + x
-            a = lrotate(a, s) + e
-            a = band(a, 0xFFFFFFFF)
-            return a
-        end
-
-        local GGG = function(a, b, c, d, e, x, s)
-            a = a + G(b, c, d) + x + 0x7a6d76e9
-            a = lrotate(a, s) + e
-            a = band(a, 0xFFFFFFFF)
-            return a
-        end
-
-        local HHH = function(a, b, c, d, e, x, s)
-            a = a + H(b, c, d) + x + 0x6d703ef3
-            a = lrotate(a, s) + e
-            a = band(a, 0xFFFFFFFF)
-            return a
-        end
-
-        local III = function(a, b, c, d, e, x, s)
-            a = a + I(b, c, d) + x + 0x5c4dd124
-            a = lrotate(a, s) + e
-            a = band(a, 0xFFFFFFFF)
-            return a
-        end
-
-        local JJJ = function(a, b, c, d, e, x, s)
-            a = a + J(b, c, d) + x + 0x50a28be6
-            a = lrotate(a, s) + e
-            a = band(a, 0xFFFFFFFF)
-            return a
-        end
-
-        local queue = {}
-        local tail = 0
-        local head = 0
-
-        local push = function(obj)
-            queue[head] = obj
-            head = head + 1
-        end
-
-        local pop = function()
-            if tail < head then
-                local obj = queue[tail]
-                queue[tail] = nil
-                tail = tail + 1
-                return obj
-            else
-                return nil
-            end
-        end
-
-        local size = function()
-            return head - tail
-        end
-
-        local getHead = function()
-            return head
-        end
-
-        local getTail = function()
-            return tail
-        end
-
-        local reset = function()
-            queue = {}
-            head = 0
-            tail = 0
-        end
-
-        local processBlock = function()
-            local aa, bb, cc, dd, ee = A, B, C, D, E
-            local aaa, bbb, ccc, ddd, eee = A, B, C, D, E
-
-            local X = {}
-
-            for i = 0, 15 do
-                X[i] = bytes2word(pop(), pop(), pop(), pop())
-            end
-
-            aa, cc = FF(aa, bb, cc, dd, ee, X[ 0], 11), lrotate(cc, 10)
-            ee, bb = FF(ee, aa, bb, cc, dd, X[ 1], 14), lrotate(bb, 10)
-            dd, aa = FF(dd, ee, aa, bb, cc, X[ 2], 15), lrotate(aa, 10)
-            cc, ee = FF(cc, dd, ee, aa, bb, X[ 3], 12), lrotate(ee, 10)
-            bb, dd = FF(bb, cc, dd, ee, aa, X[ 4],  5), lrotate(dd, 10)
-            aa, cc = FF(aa, bb, cc, dd, ee, X[ 5],  8), lrotate(cc, 10)
-            ee, bb = FF(ee, aa, bb, cc, dd, X[ 6],  7), lrotate(bb, 10)
-            dd, aa = FF(dd, ee, aa, bb, cc, X[ 7],  9), lrotate(aa, 10)
-            cc, ee = FF(cc, dd, ee, aa, bb, X[ 8], 11), lrotate(ee, 10)
-            bb, dd = FF(bb, cc, dd, ee, aa, X[ 9], 13), lrotate(dd, 10)
-            aa, cc = FF(aa, bb, cc, dd, ee, X[10], 14), lrotate(cc, 10)
-            ee, bb = FF(ee, aa, bb, cc, dd, X[11], 15), lrotate(bb, 10)
-            dd, aa = FF(dd, ee, aa, bb, cc, X[12],  6), lrotate(aa, 10)
-            cc, ee = FF(cc, dd, ee, aa, bb, X[13],  7), lrotate(ee, 10)
-            bb, dd = FF(bb, cc, dd, ee, aa, X[14],  9), lrotate(dd, 10)
-            aa, cc = FF(aa, bb, cc, dd, ee, X[15],  8), lrotate(cc, 10)
-
-            ee, bb = GG(ee, aa, bb, cc, dd, X[ 7],  7), lrotate(bb, 10)
-            dd, aa = GG(dd, ee, aa, bb, cc, X[ 4],  6), lrotate(aa, 10)
-            cc, ee = GG(cc, dd, ee, aa, bb, X[13],  8), lrotate(ee, 10)
-            bb, dd = GG(bb, cc, dd, ee, aa, X[ 1], 13), lrotate(dd, 10)
-            aa, cc = GG(aa, bb, cc, dd, ee, X[10], 11), lrotate(cc, 10)
-            ee, bb = GG(ee, aa, bb, cc, dd, X[ 6],  9), lrotate(bb, 10)
-            dd, aa = GG(dd, ee, aa, bb, cc, X[15],  7), lrotate(aa, 10)
-            cc, ee = GG(cc, dd, ee, aa, bb, X[ 3], 15), lrotate(ee, 10)
-            bb, dd = GG(bb, cc, dd, ee, aa, X[12],  7), lrotate(dd, 10)
-            aa, cc = GG(aa, bb, cc, dd, ee, X[ 0], 12), lrotate(cc, 10)
-            ee, bb = GG(ee, aa, bb, cc, dd, X[ 9], 15), lrotate(bb, 10)
-            dd, aa = GG(dd, ee, aa, bb, cc, X[ 5],  9), lrotate(aa, 10)
-            cc, ee = GG(cc, dd, ee, aa, bb, X[ 2], 11), lrotate(ee, 10)
-            bb, dd = GG(bb, cc, dd, ee, aa, X[14],  7), lrotate(dd, 10)
-            aa, cc = GG(aa, bb, cc, dd, ee, X[11], 13), lrotate(cc, 10)
-            ee, bb = GG(ee, aa, bb, cc, dd, X[ 8], 12), lrotate(bb, 10)
-
-            dd, aa = HH(dd, ee, aa, bb, cc, X[ 3], 11), lrotate(aa, 10)
-            cc, ee = HH(cc, dd, ee, aa, bb, X[10], 13), lrotate(ee, 10)
-            bb, dd = HH(bb, cc, dd, ee, aa, X[14],  6), lrotate(dd, 10)
-            aa, cc = HH(aa, bb, cc, dd, ee, X[ 4],  7), lrotate(cc, 10)
-            ee, bb = HH(ee, aa, bb, cc, dd, X[ 9], 14), lrotate(bb, 10)
-            dd, aa = HH(dd, ee, aa, bb, cc, X[15],  9), lrotate(aa, 10)
-            cc, ee = HH(cc, dd, ee, aa, bb, X[ 8], 13), lrotate(ee, 10)
-            bb, dd = HH(bb, cc, dd, ee, aa, X[ 1], 15), lrotate(dd, 10)
-            aa, cc = HH(aa, bb, cc, dd, ee, X[ 2], 14), lrotate(cc, 10)
-            ee, bb = HH(ee, aa, bb, cc, dd, X[ 7],  8), lrotate(bb, 10)
-            dd, aa = HH(dd, ee, aa, bb, cc, X[ 0], 13), lrotate(aa, 10)
-            cc, ee = HH(cc, dd, ee, aa, bb, X[ 6],  6), lrotate(ee, 10)
-            bb, dd = HH(bb, cc, dd, ee, aa, X[13],  5), lrotate(dd, 10)
-            aa, cc = HH(aa, bb, cc, dd, ee, X[11], 12), lrotate(cc, 10)
-            ee, bb = HH(ee, aa, bb, cc, dd, X[ 5],  7), lrotate(bb, 10)
-            dd, aa = HH(dd, ee, aa, bb, cc, X[12],  5), lrotate(aa, 10)
-
-            cc, ee = II(cc, dd, ee, aa, bb, X[ 1], 11), lrotate(ee, 10)
-            bb, dd = II(bb, cc, dd, ee, aa, X[ 9], 12), lrotate(dd, 10)
-            aa, cc = II(aa, bb, cc, dd, ee, X[11], 14), lrotate(cc, 10)
-            ee, bb = II(ee, aa, bb, cc, dd, X[10], 15), lrotate(bb, 10)
-            dd, aa = II(dd, ee, aa, bb, cc, X[ 0], 14), lrotate(aa, 10)
-            cc, ee = II(cc, dd, ee, aa, bb, X[ 8], 15), lrotate(ee, 10)
-            bb, dd = II(bb, cc, dd, ee, aa, X[12],  9), lrotate(dd, 10)
-            aa, cc = II(aa, bb, cc, dd, ee, X[ 4],  8), lrotate(cc, 10)
-            ee, bb = II(ee, aa, bb, cc, dd, X[13],  9), lrotate(bb, 10)
-            dd, aa = II(dd, ee, aa, bb, cc, X[ 3], 14), lrotate(aa, 10)
-            cc, ee = II(cc, dd, ee, aa, bb, X[ 7],  5), lrotate(ee, 10)
-            bb, dd = II(bb, cc, dd, ee, aa, X[15],  6), lrotate(dd, 10)
-            aa, cc = II(aa, bb, cc, dd, ee, X[14],  8), lrotate(cc, 10)
-            ee, bb = II(ee, aa, bb, cc, dd, X[ 5],  6), lrotate(bb, 10)
-            dd, aa = II(dd, ee, aa, bb, cc, X[ 6],  5), lrotate(aa, 10)
-            cc, ee = II(cc, dd, ee, aa, bb, X[ 2], 12), lrotate(ee, 10)
-
-            bb, dd = JJ(bb, cc, dd, ee, aa, X[ 4],  9), lrotate(dd, 10)
+        bb, dd = JJ(bb, cc, dd, ee, aa, X[ 4],  9), lrotate(dd, 10)
         aa, cc = JJ(aa, bb, cc, dd, ee, X[ 0], 15), lrotate(cc, 10)
         ee, bb = JJ(ee, aa, bb, cc, dd, X[ 5],  5), lrotate(bb, 10)
         dd, aa = JJ(dd, ee, aa, bb, cc, X[ 9], 11), lrotate(aa, 10)
@@ -2464,15 +2855,11 @@ function RoCrypt.ripemd160(data)
         ccc, eee = FFF(ccc, ddd, eee, aaa, bbb, X[ 9] , 11), lrotate(eee, 10)
         bbb, ddd = FFF(bbb, ccc, ddd, eee, aaa, X[11] , 11), lrotate(ddd, 10)
 
-        A, B, C, D, E = band(B + cc + ddd, 0xFFFFFFFF),
-        band(C + dd + eee, 0xFFFFFFFF),
-        band(D + ee + aaa, 0xFFFFFFFF),
-        band(E + aa + bbb, 0xFFFFFFFF),
-        band(A + bb + ccc, 0xFFFFFFFF)
+        A, B, C, D, E = band(B + cc + ddd, 0xFFFFFFFF), band(C + dd + eee, 0xFFFFFFFF), band(D + ee + aaa, 0xFFFFFFFF), band(E + aa + bbb, 0xFFFFFFFF), band(A + bb + ccc, 0xFFFFFFFF)
     end
 
     local init = function()
-        reset()
+        queue.reset()
 
         A = 0x67452301
         B = 0xefcdab89
@@ -2483,32 +2870,32 @@ function RoCrypt.ripemd160(data)
 
     local update = function(bytes)
         for i = 1, #bytes do
-            push(bytes:byte(i))
-            if size() >= 64 then processBlock() end
+            queue.push(bytes:byte(i))
+            if queue.size() >= 64 then processBlock() end
         end
     end
 
     local finish = function()
-        local bits = getHead() * 8
+        local bits = queue.getHead() * 8
 
-        push(0x80)
+        queue.push(0x80)
 
-        while ((size() + 7) % 64) < 63 do
-            push(0x00)
+        while ((queue.size() + 7) % 64) < 63 do
+            queue.push(0x00)
         end
 
         local b0, b1, b2, b3, b4, b5, b6, b7 = dword2bytes(bits)
 
-        push(b0)
-        push(b1)
-        push(b2)
-        push(b3)
-        push(b4)
-        push(b5)
-        push(b6)
-        push(b7)
+        queue.push(b0)
+        queue.push(b1)
+        queue.push(b2)
+        queue.push(b3)
+        queue.push(b4)
+        queue.push(b5)
+        queue.push(b6)
+        queue.push(b7)
 
-        while size() > 0 do
+        while queue.size() > 0 do
             processBlock()
         end
     end
@@ -2532,7 +2919,7 @@ function RoCrypt.ripemd160(data)
 
 
     init()
-    update(data)
+    update(message)
     finish()
 
     return asHex()

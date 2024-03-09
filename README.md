@@ -3,8 +3,8 @@
 ## Description
 A pure-Lua (5.1) cryptography module supporting:
 - Cryptographic hash functions (CHF)
-  - MD4, MD5
-  - RIPEMD-160
+  - MD2, MD4, MD5
+  - RIPEMD-128, RIPEMD-160
   - SHA-224, SHA-256, SHA-384, SHA-512
 - Cyclic redundancy checks (CRC) algorithms
   - CRC32

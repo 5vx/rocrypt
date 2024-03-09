@@ -3,14 +3,19 @@
 ## Description
 A pure-Lua (5.1) cryptography module supporting:
 - Cryptographic hash functions (CHF)
-  - MD5
-  - SHA-256, SHA-384, SHA-512
+  - MD4, MD5
+  - RIPEMD-160
+  - SHA-224, SHA-256, SHA-384, SHA-512
 - Cyclic redundancy checks (CRC) algorithms
   - CRC32
 - Binary-to-hex encoding algorithms
-  - Base64
+  - Base64, Base91
 - Asymmetric algorithms
   - RSA
+- Symmetric algorithms
+  - AES
+- Shared-secret algorithms
+  = HMAC
 - UID (unique identifier) algorithms
   - Snowflake
 

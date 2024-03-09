@@ -15,7 +15,7 @@ A pure-Lua (5.1) cryptography module supporting:
 - Symmetric algorithms
   - AES
 - Shared-secret algorithms
-  = HMAC
+  - HMAC
 - UID (unique identifier) algorithms
   - Snowflake
 

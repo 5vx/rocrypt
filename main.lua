@@ -2,7 +2,7 @@
 RoCrypt
 ----------------------------------------------------------------------------------------
 DESCRIPTION:
-    TODO: BLAKE3, BLAKE2S, BLAKE2B
+    TODO: Argon2, (?) BLAKE3, BLAKE2S, BLAKE2B
 	This module contains cryptographic hash functions (CHF)
 	   MD2, MD4, MD5 
 	   RIPEMD-128, RIPEMD-160
@@ -10,8 +10,8 @@ DESCRIPTION:
 	Cyclic redundancy checks (CRC) algorithms
         CRC32
     Binary-to-hex/encoding algorithms
-        BASE64
-        BASE91
+        Base64
+        Base91
     Asymmetric algorithms
         RSA
     Symmetric algorithms
@@ -61,8 +61,10 @@ USAGE:
         RoCrypt.ripemd160()
 		           
 ----------------------------------------------------------------------------------------
-CREDIT: RobloxGamerPro200007 - RSA, AES function
+CREDIT: RobloxGamerPro200007
+Egor-Skriptunoff
 github.com/somesocks/lua-lockbox
+
 --]]--
 
 
@@ -74,13 +76,18 @@ RoCrypt = {
 
 --[[--
     aliases (so as to save on memory)
+    looks messy, and the next best alternative would be 
+    setfenv, which isn't exactly a good solution 
+    (is deprecated and disables certain luau vm optimizations)
+    so we have to settle with this:
 ]]--
 local ipairs = ipairs
-band, bxor, bnot, rrotate, rshift, bor, lrotate, lshift, extract = bit32.band, bit32.bxor, bit32.bnot, bit32.rrotate, bit32.rshift, bit32.bor, bit32.lrotate, bit32.lshift, bit32.extract
-char, rep, sub, format, byte = string.char, string.rep, string.sub, string.format, string.byte
-floor = math.floor
-bit, E = bit32, nil
-persistent = {
+local band, bxor, bnot, rrotate, rshift, bor, lrotate, lshift, extract = bit32.band, bit32.bxor, bit32.bnot, bit32.rrotate, bit32.rshift, bit32.bor, bit32.lrotate, bit32.lshift, bit32.extract
+local char, rep, sub, format, byte = string.char, string.rep, string.sub, string.format, string.byte
+local floor = math.floor
+local bit, E = bit32, nil
+
+local persistent = {
     snowflake = {
         id = nil,
         increment = 0
@@ -105,10 +112,6 @@ persistent = {
             end
             AND_of_two_bytes[idx] = res
         end
-
-
-
-
 
         local function HEX(x)
             return string.format("%08x", x % 4294967296)
@@ -418,7 +421,6 @@ persistent = {
 
 
 
--- @github.com/somesocks/lua-lockbox
 function RoCrypt.utils.queue()
     local Queue = function()
         local queue = {};
@@ -2889,6 +2891,10 @@ function RoCrypt.hmac(hash_func, key, message, AsBinary)
     end
 end
 
+
+function RoCrypt.blowfish(plainText, key)
+    
+end
 
 
 

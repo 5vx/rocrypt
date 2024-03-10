@@ -6,6 +6,8 @@ A pure-Lua (5.1) cryptography module supporting:
   - MD2, MD4, MD5
   - RIPEMD-128, RIPEMD-160
   - SHA1, SHA-224, SHA-256, SHA-384, SHA-512
+  - SHA3-224, SHA3-256, SHA3-384, SHA3-512
+  - SHAKE128, SHAKE256
 - Cyclic redundancy checks (CRC) algorithms
   - CRC32
 - Binary-to-hex encoding algorithms
@@ -21,11 +23,9 @@ A pure-Lua (5.1) cryptography module supporting:
 
 ## Credit
 - RobloxGamerPro200007 - RSA function
-- Egor-Skriptunoff - Creating the original SHA backbone
+- Egor-Skriptunoff - Creating the original SHA-2 & Keccak (SHA-3) backbones
 
 ## Usage
-Input data should be a string. Result (SHA digest) is returned in hexadecimal representation as a string of lowercase hex digits.
-
 
 ```lua
 local RoCrypt = require(script.RoCrypt)

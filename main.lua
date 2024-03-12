@@ -2,7 +2,7 @@
 RoCrypt
 ----------------------------------------------------------------------------------------
 DESCRIPTION:
-    TODO: Argon2, (?) BLAKE3, BLAKE2S, BLAKE2B
+    TODO: Blowfish, Bcrypt, Argon2, (?) BLAKE3, BLAKE2S, BLAKE2B
 	This module contains cryptographic hash functions (CHF)
 	   MD2, MD4, MD5 
 	   RIPEMD-128, RIPEMD-160
@@ -87,10 +87,12 @@ RoCrypt = {
     still has a pretty nice optimization despite it technically being unneeded in the newer luau VMs
     looks messy, but the next best alternative would be setfenv, which isn't exactly a good solution (is deprecated and disables certain luau VM optimizations)
 ]]--
+
 local ipairs = ipairs
 local band, bxor, bnot, rrotate, rshift, bor, lrotate, lshift, extract = bit32.band, bit32.bxor, bit32.bnot, bit32.rrotate, bit32.rshift, bit32.bor, bit32.lrotate, bit32.lshift, bit32.extract
-local char, rep, sub, format, byte = string.char, string.rep, string.sub, string.format, string.byte
+local char, rep, sub, format, byte, sfind, len, reverse, gmatch = string.char, string.rep, string.sub, string.format, string.byte, string.find, string.len, string.reverse, string.gmatch
 local floor = math.floor
+local tfind, clear, move = table.find, table.clear, table.move
 local bit, E = bit32, nil
 
 local persistent = {
@@ -120,7 +122,7 @@ local persistent = {
         end
 
         local function HEX(x)
-            return string.format("%08x", x % 4294967296)
+            return format("%08x", x % 4294967296)
         end
         local sha2_K_lo, sha2_K_hi, sha2_H_lo, sha2_H_hi = {}, {}, {}, {}
         local sha2_H_ext256 = {[224] = {}, [256] = sha2_H_hi}
@@ -294,11 +296,10 @@ local persistent = {
                 H_lo[j] = bxor(sha2_H_lo[j], 0xa5a5a5a5)
                 H_hi[j] = bxor(sha2_H_hi[j], 0xa5a5a5a5)
             end
-            sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, "SHA-512/"..tonumber(width).."\128"..string.rep("\0", 115).."\88", common_W, 0, 128)
+            sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, "SHA-512/"..tonumber(width).."\128"..rep("\0", 115).."\88", common_W, 0, 128)
             sha2_H_ext512_lo[width] = H_lo
             sha2_H_ext512_hi[width] = H_hi
         end
-
 
         --------------------------------------------------------------------------------
         -- FINAL FUNCTIONS
@@ -329,7 +330,7 @@ local persistent = {
                     end
                 else
                     if tail then
-                        local final_blocks = {tail, "\128", string.rep("\0", (-9 - length) % 64 + 1)}
+                        local final_blocks = {tail, "\128", rep("\0", (-9 - length) % 64 + 1)}
                         tail = nil
                         -- Assuming user data length is shorter than 2^53 bytes
                         -- Anyway, it looks very unrealistic that one would spend enough time to process a 2^53 bytes of data by using this Lua script :-)
@@ -388,7 +389,7 @@ local persistent = {
                     end
                 else
                     if tail then
-                        local final_blocks = {tail, "\128", string.rep("\0", (-17-length) % 128 + 9)}
+                        local final_blocks = {tail, "\128", rep("\0", (-17-length) % 128 + 9)}
                         tail = nil
                         -- Assuming user data length is shorter than 2^53 bytes
                         -- 2^53 bytes = 2^56 bits, so "bit-counter" fits in 7 bytes
@@ -432,7 +433,7 @@ local persistent = {
                 local sh_reg = 29
                 local function next_bit()
                     local r = sh_reg % 2
-                    sh_reg = bit32.bxor((sh_reg - r) / 2, 142 * r)
+                    sh_reg = bxor((sh_reg - r) / 2, 142 * r)
                     return r
                 end
 
@@ -706,7 +707,6 @@ local persistent = {
                             keccak_feed(lanes_lo, lanes_hi, tail .. string.sub(message_part, 1, offs), 0, block_size_in_bytes, block_size_in_bytes)
                             tail = ""
                         end
-
                         local size = partLength - offs
                         local size_tail = size % block_size_in_bytes
                         keccak_feed(lanes_lo, lanes_hi, message_part, offs, size - size_tail, block_size_in_bytes)
@@ -719,12 +719,12 @@ local persistent = {
                     if tail then
                         -- append the following bits to the message: for usual SHA3: 011(0*)1, for SHAKE: 11111(0*)1
                         local gap_start = is_SHAKE and 31 or 6
-                        tail = tail .. (#tail + 1 == block_size_in_bytes and string.char(gap_start + 128) or string.char(gap_start) .. string.rep("\0", (-2 - #tail) % block_size_in_bytes) .. "\128")
+                        tail = tail .. (#tail + 1 == block_size_in_bytes and string.char(gap_start + 128) or string.char(gap_start) .. rep("\0", (-2 - #tail) % block_size_in_bytes) .. "\128")
                         keccak_feed(lanes_lo, lanes_hi, tail, 0, #tail, block_size_in_bytes)
                         tail = nil
 
                         local lanes_used = 0
-                        local total_lanes = math.floor(block_size_in_bytes / 8)
+                        local total_lanes = floor(block_size_in_bytes / 8)
                         local qwords = {}
 
                         local function get_next_qwords_of_digest(qwords_qty)
@@ -736,14 +736,14 @@ local persistent = {
                                 lanes_used = 0
                             end
 
-                            qwords_qty = math.floor(math.min(qwords_qty, total_lanes - lanes_used))
+                            qwords_qty = floor(math.min(qwords_qty, total_lanes - lanes_used))
                             if hi_factor_keccak ~= 0 then
                                 for j = 1, qwords_qty do
                                     qwords[j] = HEX64(lanes_lo[lanes_used + j - 1 + lanes_index_base])
                                 end
                             else
                                 for j = 1, qwords_qty do
-                                    qwords[j] = string.format("%08x", lanes_hi[lanes_used + j] % 4294967296) .. string.format("%08x", lanes_lo[lanes_used + j] % 4294967296)
+                                    qwords[j] = format("%08x", lanes_hi[lanes_used + j] % 4294967296) .. format("%08x", lanes_lo[lanes_used + j] % 4294967296)
                                 end
                             end
 
@@ -886,110 +886,126 @@ function RoCrypt.utils.word2bytes(word)
     return b0, b1, b2, b3
 end
 function RoCrypt.utils.dword2bytes(i)
-    local b4, b5, b6, b7 = RoCrypt.utils.word2bytes(math.floor(i / 0x100000000))
+    local b4, b5, b6, b7 = RoCrypt.utils.word2bytes(floor(i / 0x100000000))
     local b0, b1, b2, b3 = RoCrypt.utils.word2bytes(i)
     return b0, b1, b2, b3, b4, b5, b6, b7
 end
 
 
-function RoCrypt.sha1(message: string)
-    local INIT_0 = 0x67452301
-    local INIT_1 = 0xEFCDAB89
-    local INIT_2 = 0x98BADCFE
-    local INIT_3 = 0x10325476
-    local INIT_4 = 0xC3D2E1F0
+function RoCrypt.sha1(message)
+    local md5_K, md5_sha1_H = {}, {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0}
 
-    local APPEND_CHAR = string.char(0x80)
-    local INT_32_CAP = 2^32
+    local common_W = {}
+    local function sha1_feed_64(H, str, offs, size)
+        -- offs >= 0, size >= 0, size is multiple of 64
+        local W = common_W
+        local h1, h2, h3, h4, h5 = H[1], H[2], H[3], H[4], H[5]
+        for pos = offs, offs + size - 1, 64 do
+            for j = 1, 16 do
+                pos = pos + 4
+                local a, b, c, d = string.byte(str, pos - 3, pos)
+                W[j] = ((a * 256 + b) * 256 + c) * 256 + d
+            end
 
-    ---Packs four 8-bit integers into one 32-bit integer
-    local function packUint32(a, b, c, d)
-        return lshift(a, 24)+lshift(b, 16)+lshift(c, 8)+d
+            for j = 17, 80 do
+                W[j] = lrotate(bxor(W[j - 3], W[j - 8], W[j - 14], W[j - 16]), 1)
+            end
+
+            local a, b, c, d, e = h1, h2, h3, h4, h5
+            for j = 1, 20 do
+                local z = lrotate(a, 5) + band(b, c) + band(-1 - b, d) + 0x5A827999 + W[j] + e -- constant = math.floor(TWO_POW_30 * sqrt(2))
+                e = d
+                d = c
+                c = rrotate(b, 2)
+                b = a
+                a = z
+            end
+
+            for j = 21, 40 do
+                local z = lrotate(a, 5) + bxor(b, c, d) + 0x6ED9EBA1 + W[j] + e -- TWO_POW_30 * sqrt(3)
+                e = d
+                d = c
+                c = rrotate(b, 2)
+                b = a
+                a = z
+            end
+
+            for j = 41, 60 do
+                local z = lrotate(a, 5) + band(d, c) + band(b, bxor(d, c)) + 0x8F1BBCDC + W[j] + e -- TWO_POW_30 * sqrt(5)
+                e = d
+                d = c
+                c = rrotate(b, 2)
+                b = a
+                a = z
+            end
+
+            for j = 61, 80 do
+                local z = lrotate(a, 5) + bxor(b, c, d) + 0xCA62C1D6 + W[j] + e -- TWO_POW_30 * sqrt(10)
+                e = d
+                d = c
+                c = rrotate(b, 2)
+                b = a
+                a = z
+            end
+
+            h1 = (a + h1) % 4294967296
+            h2 = (b + h2) % 4294967296
+            h3 = (c + h3) % 4294967296
+            h4 = (d + h4) % 4294967296
+            h5 = (e + h5) % 4294967296
+        end
+
+        H[1], H[2], H[3], H[4], H[5] = h1, h2, h3, h4, h5
     end
 
-    ---Unpacks one 32-bit integer into four 8-bit integers
-    local function unpackUint32(int)
-        return extract(int, 24, 8), extract(int, 16, 8), extract(int, 08, 8), extract(int, 00, 8)
-    end
+    -- Create an instance (private objects for current calculation)
+    local H, length, queue = table.pack(table.unpack(md5_sha1_H)), 0, RoCrypt.utils.queue()
 
-    local function F(t, A, B, C)
-        if t <= 19 then
-            -- C ~ (A & (B ~ C)) has less ops than (A & B) | (~A & C)
-            return bxor(C, band(A, bxor(B, C)))
-        elseif t <= 39 then
-            return bxor(A, B, C)
-        elseif t <= 59 then
-            -- A | (B | C) | (B & C) has less ops than (A & B) | (A & C) | (B & C)
-            return bor(band(A, bor(B, C)), band(B, C))
+    local function partial(message_part)
+        if message_part then
+            length = length + #message_part
+            queue.push(message_part)
+            return partial
         else
-            return bxor(A, B, C)
+            if queue.size() > 0 then
+                local tail = queue.pop()
+                local final_blocks = table.create(10) --{tail, "\128", string.rep("\0", (-9 - length) % 64 + 1)}
+                final_blocks[1] = tail
+                final_blocks[2] = "\128"
+                final_blocks[3] = string.rep("\0", (-9 - length) % 64 + 1)
+
+                -- Assuming user data length is shorter than (TWO_POW_53)-9 bytes
+                -- TWO_POW_53 bytes = TWO_POW_56 bits, so "bit-counter" fits in 7 bytes
+                length = length * (8 / (256^7)) -- convert "byte-counter" to "bit-counter" and move decimal point to the left
+                for j = 4, 10 do
+                    length = length % 1 * 256
+                    final_blocks[j] = string.char(math.floor(length))
+                end
+
+                final_blocks = table.concat(final_blocks)
+                sha1_feed_64(H, final_blocks, 0, #final_blocks)
+                for j = 1, 5 do
+                    H[j] = string.format("%08x", H[j] % 4294967296)
+                end
+
+                H = table.concat(H)
+                queue.reset()
+            end
+
+            return H
         end
     end
 
-    local function K(t)
-        if t <= 19 then
-            return 0x5A827999
-        elseif t <= 39 then
-            return 0x6ED9EBA1
-        elseif t <= 59 then
-            return 0x8F1BBCDC
-        else
-            return 0xCA62C1D6
-        end
+    if message then
+        -- Actually perform calculations and return the SHA-1 digest of a message
+        return partial(message)()
+    else
+        -- Return function for chunk-by-chunk loading
+        -- User should feed every chunk of input data as single argument to this function and finally get SHA-1 digest by invoking this function without an argument
+        return partial
     end
-
-    local function preprocessMessage(message)
-        local initMsgLen = #message*8 -- Message length in bits
-        local msgLen = initMsgLen+8
-        local nulCount = 4 -- This is equivalent to 32 bits.
-        message = message..APPEND_CHAR
-        while (msgLen+64)%512 ~= 0 do
-            nulCount = nulCount+1
-            msgLen = msgLen+8
-        end
-        message = message..string.rep("\0", nulCount)
-        message = message..string.char(unpackUint32(initMsgLen))
-        return message
-    end
-
-    local message = preprocessMessage(message)
-
-    local H0 = INIT_0
-    local H1 = INIT_1
-    local H2 = INIT_2
-    local H3 = INIT_3
-    local H4 = INIT_4
-
-    local W = {}
-    for chunkStart = 1, #message, 64 do
-        local place = chunkStart
-        for t = 0, 15 do
-            W[t] = packUint32(string.byte(message, place, place+3))
-            place = place+4
-        end
-        for t = 16, 79 do
-            W[t] = lrotate(bxor(W[t-3], W[t-8], W[t-14], W[t-16]), 1)
-        end
-
-        local A, B, C, D, E = H0, H1, H2, H3, H4
-
-        for t = 0, 79 do
-            local TEMP = ( lrotate(A, 5)+F(t, B, C, D)+E+W[t]+K(t) )%INT_32_CAP
-
-            E, D, C, B, A = D, C, lrotate(B, 30), A, TEMP
-        end
-
-        H0 = (H0+A)%INT_32_CAP
-        H1 = (H1+B)%INT_32_CAP
-        H2 = (H2+C)%INT_32_CAP
-        H3 = (H3+D)%INT_32_CAP
-        H4 = (H4+E)%INT_32_CAP
-    end
-    local result = string.format("%08x%08x%08x%08x%08x", H0, H1, H2, H3, H4)
-    return result
-
-
 end
+
 
 function RoCrypt.sha224(message: string)
     return sha256ext(224, message)
@@ -1024,11 +1040,11 @@ function RoCrypt.sha3_512(message: string)
 end
 
 function RoCrypt.shake128(message:string , digest_size: number)
-    return keccak((1600 - 2 * 128) / 8, digest_size/8, true, message)
+    return keccak((1600 - 2 * 128) / 8, digest_size/2, true, message)
 end
 
 function RoCrypt.shake256(message:string , digest_size: number)
-    return keccak((1600 - 2 * 256) / 8, digest_size/8, true, message)
+    return keccak((1600 - 2 * 256) / 8, digest_size/2, true, message)
 end
 
 function RoCrypt.crc32(message: string, hex: boolean?)
@@ -1045,7 +1061,7 @@ function RoCrypt.crc32(message: string, hex: boolean?)
         end
     end
     if hex == true then
-        return string.format("%X", bxor(crc, 0xFFFFFFFF))
+        return format("%X", bxor(crc, 0xFFFFFFFF))
     elseif not hex or hex == false then
         return bxor(crc, 0xFFFFFFFF)
     end
@@ -1117,11 +1133,11 @@ function RoCrypt.rsa()
         end
     end
     local function add(m, n, t)									-- Addition
-        table.clear(t)
+        clear(t)
         if #m == 1 and m[1] == 0 then
-            return table.move(n, 1, #n, 1, t)
+            return move(n, 1, #n, 1, t)
         elseif #n == 1 and n[1] == 0 then
-            return table.move(m, 1, #m, 1, t)
+            return move(m, 1, #m, 1, t)
         end
         m, n = if #m > #n then m else n, if #m > #n then n else m
         local c, d = 0, nil
@@ -1140,7 +1156,7 @@ function RoCrypt.rsa()
         return t
     end
     local function sub(m, n, t)									-- Substraction
-        table.clear(t)
+        clear(t)
         local s = cmp(m, n)
         if s == nil then
             t[1] = 0
@@ -1148,9 +1164,9 @@ function RoCrypt.rsa()
         end
         m, n = if s then m else n, if s then n else m
         if #m == 1 and m[1] == 0 then
-            return table.move(n, 1, #n, 1, t), s
+            return move(n, 1, #n, 1, t), s
         elseif #n == 1 and n[1] == 0 then
-            return table.move(m, 1, #m, 1, t), s
+            return move(m, 1, #m, 1, t), s
         end
         local c, d = 0, nil
 
@@ -1168,7 +1184,7 @@ function RoCrypt.rsa()
         return t, s
     end
     local function mul(m, n, t)									-- Multiplication
-        table.clear(t)
+        clear(t)
         if (#m == 1 and m[1] == 0) or (#n == 1 and n[1] == 0) then
             t[1] = 0
             return t
@@ -1180,7 +1196,7 @@ function RoCrypt.rsa()
             c = 0
             for j = #n, 1, - 1 do
                 d = (t[i + j] or 0) + (n[j] or 0) * m[i] + c
-                t[i + j], c = d % 16777216, math.floor(d / 16777216)
+                t[i + j], c = d % 16777216, floor(d / 16777216)
             end
             t[i] = c
         end
@@ -1191,73 +1207,73 @@ function RoCrypt.rsa()
         return t
     end
     local function div(m, n, t1, t2, p1, p2)					-- Division and modulus
-        table.clear	(t1)
-        table.clear	(t2)
+        clear	(t1)
+        clear	(t2)
         t1[1] = 0
-        table.move	(m, 1, #m, 1, t2)
+        move	(m, 1, #m, 1, t2)
         local s = true
 
         while cmp(t2, n) ~= false do
-            table.clear(p1)
+            clear(p1)
             if t2[1] < n[1] then
-                p1[1] = math.floor((16777216 * t2[1] + t2[2]) / n[1])
+                p1[1] = floor((16777216 * t2[1] + t2[2]) / n[1])
                 for i = 2, #t2 - #n do
                     p1[i] = 0
                 end
             else
-                p1[1] = math.floor(t2[1] / n[1])
+                p1[1] = floor(t2[1] / n[1])
                 for i = 2, #t2 - #n + 1 do
                     p1[i] = 0
                 end
             end
 
-            table.clear(p2)
-            table.move(t1, 1, #t1, 1, p2)
+            clear(p2)
+            move(t1, 1, #t1, 1, p2)
             _ = if s then add(p1, p2, t1) else sub(p1, p2, t1)
-            table.clear(p2)
-            mul(table.move(p1, 1, #p1, 1, p2), n, p1)
-            table.clear(p2)
-            table.move(t2, 1, #t2, 1, p2)
+            clear(p2)
+            mul(move(p1, 1, #p1, 1, p2), n, p1)
+            clear(p2)
+            move(t2, 1, #t2, 1, p2)
             _, s = sub(if s then p2 else p1, if s then p1 else p2, t2)
         end
         if not s then
-            table.clear(p1)
-            table.clear(p2)
+            clear(p1)
+            clear(p2)
             p2[1] = 1
-            sub(table.move(t1, 1, #t1, 1, p1), p2, t1)
-            table.clear(p1)
-            sub(n, table.move(t2, 1, #t2, 1, p1), t2)
+            sub(move(t1, 1, #t1, 1, p1), p2, t1)
+            clear(p1)
+            sub(n, move(t2, 1, #t2, 1, p1), t2)
         end
 
         return t1, t2
     end
     local function lcm(m, n, t, p1, p2, p3, p4, p5)				-- Least common multiple
-        table.clear(t)
-        table.clear(p1)
+        clear(t)
+        clear(p1)
 
-        table.move(m, 1, #m, 1, t)
-        table.move(n, 1, #n, 1, p1)
+        move(m, 1, #m, 1, t)
+        move(n, 1, #n, 1, p1)
         while #p1 ~= 1 or p1[1] ~= 0 do 
             div(t, p1, p2, p3, p4, p5)
-            table.clear(p2)
-            table.move(t, 1, #t, 1, p2)
+            clear(p2)
+            move(t, 1, #t, 1, p2)
 
-            table.clear(t)
-            table.move(p1, 1, #p1, 1, t)
-            table.clear(p1)
-            table.move(p3, 1, #p3, 1, p1)
-            table.clear(p3)
-            table.move(p2, 1, #p2, 1, p3)
+            clear(t)
+            move(p1, 1, #p1, 1, t)
+            clear(p1)
+            move(p3, 1, #p3, 1, p1)
+            clear(p3)
+            move(p2, 1, #p2, 1, p3)
         end
 
-        table.clear(p2)
-        return div(mul(m, n, p1), table.move(t, 1, #t, 1, p2), t, p3, p4, p5)
+        clear(p2)
+        return div(mul(m, n, p1), move(t, 1, #t, 1, p2), t, p3, p4, p5)
     end --local e = 0
     local function pow(m, n, d, t, p1, p2, p3, p4, p5, p6)		-- Modular exponentiation
-        table.clear	(t)
-        table.clear	(p1)
+        clear	(t)
+        clear	(p1)
         t[1] = 1
-        table.move	(m, 1, #m, 1, p1)
+        move	(m, 1, #m, 1, p1)
         local c, i = n[#n] + 16777216, #n
 
         for _ = 1, math.log(n[1], 2) + (#n - 1) * 24 + 1 do --e+=1 if e % 800 == 0 then task.wait() end
@@ -1270,32 +1286,32 @@ function RoCrypt.rsa()
                 c = (n[i] or 0) + 16777216
             end
 
-            table.clear(p2)
-            div(mul(table.move(p1, 1, #p1, 1, p2), p2, p3), d, p4, p1, p5, p6)
+            clear(p2)
+            div(mul(move(p1, 1, #p1, 1, p2), p2, p3), d, p4, p1, p5, p6)
         end
 
         return t
     end
     local function inv(m, n, t, p1, p2, p3, p4, p5, p6, p7, p8) -- Modular multiplicative inverse
-        table.clear	(t)
-        table.clear	(p1)
-        table.clear	(p2)
-        table.clear	(p3)
+        clear	(t)
+        clear	(p1)
+        clear	(p2)
+        clear	(p3)
         t[1] 	= 1
         p1[1] 	= 0
-        table.move	(m, 1, #m, 1, p2)
-        table.move	(n, 1, #n, 1, p3)
+        move	(m, 1, #m, 1, p2)
+        move	(n, 1, #n, 1, p3)
         local s1, s2, s3 = true, true, true
 
         while #p2 ~= 1 or p2[1] ~= 1 do
             div(p2, p3, p4, p5, p6, p7)
-            table.clear	(p5)
-            table.move	(p3, 1, #p3, 1, p5)
+            clear	(p5)
+            move	(p3, 1, #p3, 1, p5)
             div(p2, p5, p6, p3, p7, p8)
-            table.clear	(p2)
-            table.move	(p5, 1, #p5, 1, p2)
-            table.clear	(p5)
-            table.move	(p1, 1, #p1, 1, p5)
+            clear	(p2)
+            move	(p5, 1, #p5, 1, p2)
+            clear	(p5)
+            move	(p1, 1, #p1, 1, p5)
 
             s3 = s2
             mul(p1, p4, p6)
@@ -1306,12 +1322,12 @@ function RoCrypt.rsa()
                 add(t, p6, p1)
                 s2 = s1
             end
-            table.move	(p5, 1, #p5, 1, t)
+            move	(p5, 1, #p5, 1, t)
             s1 = s3
         end
         if not s1 then 
-            table.clear(p1)
-            sub(n, table.move(t, 1, #t, 1, p1), t)
+            clear(p1)
+            sub(n, move(t, 1, #t, 1, p1), t)
         end
 
         return t
@@ -1319,8 +1335,8 @@ function RoCrypt.rsa()
 
     -- PROBABLY PRIME CHECKERS
     local function isDivisible	(a, p1, p2, p3, p4, p5) -- Checks if it is divisible by the first primes
-        table.clear(p1)
-        if #a == 1 and table.find(primes, a[1]) then
+        clear(p1)
+        if #a == 1 and tfind(primes, a[1]) then
             return false
         end
         for _, p in pairs(primes) do
@@ -1332,11 +1348,11 @@ function RoCrypt.rsa()
         end
     end
     local function isPrime		(a, cnt, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, r) -- General test
-        table.clear(p1)
-        table.clear(p3)
+        clear(p1)
+        clear(p3)
         if #a == 0 then
             return false
-        elseif #a == 1 and table.find(primes, a[1]) then
+        elseif #a == 1 and tfind(primes, a[1]) then
             return true
         end
         p1[1] = 1
@@ -1359,7 +1375,7 @@ function RoCrypt.rsa()
             end
         end
 
-        table.move(p2, 1, #p2, 1, p3)
+        move(p2, 1, #p2, 1, p3)
         i = #p2
         while p2[i] == 0 do
             k += 24
@@ -1393,10 +1409,10 @@ function RoCrypt.rsa()
             end
             i = true
             for _ = 1, k - 1 do
-                table.clear	(p1)
+                clear	(p1)
                 p1[1] = 2
-                table.clear	(p5)
-                table.move	(p4, 1, #p4, 1, p5)
+                clear	(p5)
+                move	(p4, 1, #p4, 1, p5)
                 div(mul(p4, p5, p1), a, p5, p4, p6, p7)
                 if #p4 == 1 and p4[1] == 1 then
                     return false
@@ -1417,10 +1433,10 @@ function RoCrypt.rsa()
         local t, n = {}, nil
         if type(a) == "number" then
             assert(a == a and a >= 0 and math.abs(a) ~= math.huge, "Unable to cast value to bigInt")
-            a = math.floor(a)
+            a = floor(a)
             while a ~= 0 do
                 table.insert(t, 1, a % 16777216)
-                a = math.floor(a / 16777216)
+                a = floor(a / 16777216)
             end
         elseif type(a) == "string" then
             if string.match(a, "^[0_]*$") then
@@ -1428,33 +1444,33 @@ function RoCrypt.rsa()
             elseif string.match(a, "^_*0_*[Xx][%x_]+$") or string.match(a, "^_*0_*[Bb][01_]+$") then
                 local x = if string.match(a, "[Xx]") then 16 else 2
                 n = string.gsub(string.match(a, "0_*.[0_]*(.+)"), "_", "")
-                n = string.rep("0", - string.len(n) % if x == 16 then 6 else 24) .. n
-                for i in string.gmatch(n, "(......" .. if x == 16 then ")" else "..................)")
+                n = rep("0", - len(n) % if x == 16 then 6 else 24) .. n
+                for i in gmatch(n, "(......" .. if x == 16 then ")" else "..................)")
                 do
                     table.insert(t, tonumber(i, x))
                 end
             elseif string.match(a, "^_*[%d_]*%.?[%d_]*$") then
-                table.clear(p1)
-                table.clear(p2)
+                clear(p1)
+                clear(p2)
                 p1[1] = 10000000
                 p2[1] = 1
                 n = string.gsub(string.match(a, "_*[0_]*([%d_]*)%.?.-$"), "_", "")
-                n = string.rep("0", - string.len(n) % 7) .. n
-                for i in string.gmatch(string.reverse(n), "(.......)") do
-                    table.clear(p3)
-                    p3[1] = tonumber(string.reverse(i))
+                n = rep("0", - len(n) % 7) .. n
+                for i in gmatch(reverse(n), "(.......)") do
+                    clear(p3)
+                    p3[1] = tonumber(reverse(i))
                     mul(p3, p2, p4)
-                    table.clear(p3)
-                    add(p4, table.move(t, 1, #t, 1, p3), t)
-                    table.clear(p3)
-                    mul(table.move(p2, 1, #p2, 1, p3), p1, p2)
+                    clear(p3)
+                    add(p4, move(t, 1, #t, 1, p3), t)
+                    clear(p3)
+                    mul(move(p2, 1, #p2, 1, p3), p1, p2)
                 end
             else
                 error("Unable to cast value to bigInt")
             end
         elseif type(a) == "table" then
             for i, j in ipairs(a) do
-                assert(type(j) == "number" and math.floor(j) == j and 0 <= j and j < 16777216,
+                assert(type(j) == "number" and floor(j) == j and 0 <= j and j < 16777216,
                     "Unable to cast value to bigInt")
                 t[i] = j
             end
@@ -1477,7 +1493,7 @@ function RoCrypt.rsa()
             local p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14 = {}, {}, {}, {}, {}, {}, {}
             , {}, {}, {}, {}, {}, {}, {}
             if q == nil then
-                local l = math.floor(tonumber(p) or 256)
+                local l = floor(tonumber(p) or 256)
                 assert(2 < l and l < 4294967296, "Invalid key length")
                 local r1, r2, mm = Random.new(), Random.new(), lshift(1, (l - 1) % 24)
                 local ml = lshift(mm, 1) - 1
@@ -1492,10 +1508,10 @@ function RoCrypt.rsa()
                         p[l] += 1
                     end
 
-                    table.clear(p1)
+                    clear(p1)
                     p1[1] = 2
                     while isDivisible(p, p2, p3, p4, p5, p6) do
-                        add(table.move(p, 1, #p, 1, p2), p1, p)
+                        add(move(p, 1, #p, 1, p2), p1, p)
                     end
                 end
                 while cmp(p, q) == nil or not isPrime(q, 5, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, r2) do
@@ -1507,17 +1523,17 @@ function RoCrypt.rsa()
                         q[l] += 1
                     end
 
-                    table.clear(p1)
+                    clear(p1)
                     p1[1] = 2
                     while isDivisible(q, p2, p3, p4, p5, p6) do
-                        add(table.move(q, 1, #q, 1, p2), p1, q)
+                        add(move(q, 1, #q, 1, p2), p1, q)
                     end
                 end
             else
                 p, q = convertType(p, p1, p2, p3, p4), convertType(q, p1, p2, p3, p4)
                 e = if e == nil then nil else convertType(e, p1, p2, p3, p4)
             end
-            table.clear(p1)
+            clear(p1)
 
             p1[1] = 1
             lcm(sub(p, p1, p2), sub(q, p1, p3), p4, p5, p6, p7, p8, p9)
@@ -1551,13 +1567,13 @@ function RoCrypt.rsa()
                 if cmp(p1, p2) == false then
                 div(q, p, p4, p5, p6, p7)
                 if #p5 ~= 1 or p5[1] ~= 0 then
-                    table.clear(p5)
-                    table.clear(p6)
+                    clear(p5)
+                    clear(p6)
                     p6[1] = 1
-                    add(table.move(p4, 1, #p4, 1, p5), p6, p4)
+                    add(move(p4, 1, #p4, 1, p5), p6, p4)
                 end
-                table.clear(p5)
-                sub(mul(p4, p, p6), table.move(p3, 1, #p3, 1, p5), p3)
+                clear(p5)
+                sub(mul(p4, p, p6), move(p3, 1, #p3, 1, p5), p3)
             end
                 div(mul(p3, q_inv, p4), p, p5, p3, p6, p7)
                 div(add(mul(p3, q, p1), p2, p3), n, p2, p4, p5, p6)
@@ -1591,31 +1607,31 @@ function RoCrypt.rsa()
                     a 	 *= 2 ^ - (e + 970)
                     for i = 1, 7 do
                         table.insert	(r, 2, a % 256)
-                        a = math.floor	(a / 256)
+                        a = floor	(a / 256)
                     end
                 else
                     r, a = {if a < 0 then 128 else 0}, math.abs(a)
                     local e = math.round(math.log(a, 2))
                     r[2]  = (e + 1023) % 16 * 16
-                    r[1] += math.floor((e + 1023) / 16)
+                    r[1] += floor((e + 1023) / 16)
                     a = (a * 2 ^ - e % 1) * 4503599627370496
                     for i = 1, 6 do
                         table.insert	(r, 3, a % 256)
-                        a = math.floor	(a / 256)
+                        a = floor	(a / 256)
                     end
                     r[2] += a
                 end
             elseif type(a) == "string" then
                 assert(a ~= "", "Unable to cast value to bytes")
                 r = {}
-                for i = 1, string.len(a), 7997 do
-                    table.move({string.byte(a, i, i + 7996)}, 1, 7997, i, r)
+                for i = 1, len(a), 7997 do
+                    move({string.byte(a, i, i + 7996)}, 1, 7997, i, r)
                 end
             elseif type(a) == "table" then
                 assert(#a ~= 0, "Unable to cast value to bytes")
                 r = {}
                 for _, i in ipairs(a) do
-                    assert(type(i) == "number" and math.floor(i) == i and 0 <= i and i < 256,
+                    assert(type(i) == "number" and floor(i) == i and 0 <= i and i < 256,
                         "Unable to cast value to bytes")
                     r[i] = i
                 end
@@ -1679,7 +1695,7 @@ function RoCrypt.base64()
             if x == "=" then
                 return ""
             end
-            local r, f = "", (string.find(base64chars, x) - 1)
+            local r, f = "", (sfind(base64chars, x) - 1)
             for i = 6, 1, -1 do
                 r = r .. (f % 2 ^ i - f % 2 ^ (i - 1) > 0 and "1" or "0")
             end
@@ -1733,7 +1749,7 @@ function RoCrypt.base91()
                     counter = rshift(counter, 14)
                     numBits = numBits-14
                 end
-                output[c] = encode_CharSet[entry%91]..encode_CharSet[math.floor(entry/91)]
+                output[c] = encode_CharSet[entry%91]..encode_CharSet[floor(entry/91)]
                 c = c+1
             end
         end
@@ -1741,7 +1757,7 @@ function RoCrypt.base91()
         if numBits > 0 then
             output[c] = encode_CharSet[counter%91]
             if numBits > 7 or counter > 90 then
-                output[c+1] = encode_CharSet[math.floor(counter/91)]
+                output[c+1] = encode_CharSet[floor(counter/91)]
             end
         end
 
@@ -1876,7 +1892,7 @@ function RoCrypt.md2(message)
         C[i] = 0x00
     end
 
-    for b in string.gmatch(message, ".") do
+    for b in gmatch(message, ".") do
         queue.push(string.byte(b))
         if queue.size() >= 16 then
             processBlock()
@@ -1907,7 +1923,7 @@ function RoCrypt.md2(message)
     queue.push(C[15])
     processBlock()
 
-    return string.format(
+    return format(
         "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
         X[0], X[1], X[2], X[3], X[4], X[5], X[6], X[7],
         X[8], X[9], X[10], X[11], X[12], X[13], X[14], X[15]
@@ -2023,7 +2039,7 @@ function RoCrypt.md4(message: string)
     C = 0x98badcfe
     D = 0x10325476
 
-    for b in string.gmatch(message, ".") do
+    for b in gmatch(message, ".") do
         queue.push(string.byte(b))
         if queue.size() >= 64 then processBlock() end
     end
@@ -2055,14 +2071,13 @@ function RoCrypt.md4(message: string)
     local b8, b9, b10, b11 = RoCrypt.utils.word2bytes(C)
     local b12, b13, b14, b15 = RoCrypt.utils.word2bytes(D)
 
-    return string.format("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+    return format("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
         b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15)
 end
 
 function RoCrypt.md5(message: string)
     local md5_K, md5_sha1_H = {}, {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0}
     local md5_next_shift = {0, 0, 0, 0, 0, 0, 0, 0, 28, 25, 26, 27, 0, 0, 10, 9, 11, 12, 0, 15, 16, 17, 18, 0, 20, 22, 23, 21}
-
 
     local function md5_feed_64(H, str, offs, size)
         -- offs >= 0, size >= 0, size is multiple of 64
@@ -2124,49 +2139,55 @@ function RoCrypt.md5(message: string)
 
         H[1], H[2], H[3], H[4] = h1, h2, h3, h4
     end
+
     -- Constants for MD5
     do
         for idx = 1, 64 do
-            -- we can't use formula math.floor(abs(sin(idx))*2^32) because its result may be beyond integer range on Lua built with 32-bit integers
+            -- we can't use formula floor(abs(sin(idx))*2^32) because its result may be beyond integer range on Lua built with 32-bit integers
             local hi, lo = math.modf(math.abs(math.sin(idx)) * 2^16)
-            md5_K[idx] = hi * 65536 + math.floor(lo * 2^16)
+            md5_K[idx] = hi * 65536 + floor(lo * 2^16)
         end
     end
 
-
-
-
-
     -- Create an instance (private objects for current calculation)
-    local H, length, tail = table.create(4), 0, ""
+    local H, length, queue = table.create(4), 0, RoCrypt.utils.queue()
     H[1], H[2], H[3], H[4] = md5_sha1_H[1], md5_sha1_H[2], md5_sha1_H[3], md5_sha1_H[4]
 
     local function partial(message_part)
         if message_part then
-            local partLength = #message_part
-            if tail then
-                length = length + partLength
-                local offs = 0
-                if tail ~= "" and #tail + partLength >= 64 then
-                    offs = 64 - #tail
-                    md5_feed_64(H, tail .. string.sub(message_part, 1, offs), 0, 64)
-                    tail = ""
-                end
-
-                local size = partLength - offs
-                local size_tail = size % 64
-                md5_feed_64(H, message_part, offs, size - size_tail)
-                tail = tail .. string.sub(message_part, partLength + 1 - size_tail)
-                return partial
-            else
-                error("Adding more chunks is not allowed after receiving the result", 2)
-            end
+            queue.push(message_part)
+            return partial
         else
+            local tail = ""
+            while queue.size() > 0 do
+                local message_part = queue.pop()
+                local partLength = #message_part
+                if tail then
+                    length = length + partLength
+                    local offs = 0
+                    if tail ~= "" and #tail + partLength >= 64 then
+                        offs = 64 - #tail
+                        md5_feed_64(H, tail .. string.sub(message_part, 1, offs), 0, 64)
+                        tail = ""
+                    end
+
+                    local size = partLength - offs
+                    local size_tail = size % 64
+                    md5_feed_64(H, message_part, offs, size - size_tail)
+                    tail = tail .. string.sub(message_part, partLength + 1 - size_tail)
+                else
+                    length = length + partLength
+                    local size_tail = partLength % 64
+                    md5_feed_64(H, message_part, 0, partLength - size_tail)
+                    tail = string.sub(message_part, partLength + 1 - size_tail)
+                end
+            end
+
             if tail then
-                local final_blocks = table.create(3) --{tail, "\128", string.rep("\0", (-9 - length) % 64)}
+                local final_blocks = table.create(3) --{tail, "\128", rep("\0", (-9 - length) % 64)}
                 final_blocks[1] = tail
                 final_blocks[2] = "\128"
-                final_blocks[3] = string.rep("\0", (-9 - length) % 64)
+                final_blocks[3] = rep("\0", (-9 - length) % 64)
                 tail = nil
                 length = length * 8 -- convert "byte-counter" to "bit-counter"
                 for j = 4, 11 do
@@ -2178,7 +2199,7 @@ function RoCrypt.md5(message: string)
                 final_blocks = table.concat(final_blocks)
                 md5_feed_64(H, final_blocks, 0, #final_blocks)
                 for j = 1, 4 do
-                    H[j] = string.format("%08x", H[j] % 4294967296)
+                    H[j] = format("%08x", H[j] % 4294967296)
                 end
 
                 H = string.gsub(table.concat(H), "(..)(..)(..)(..)", "%4%3%2%1")
@@ -2196,18 +2217,9 @@ function RoCrypt.md5(message: string)
         -- User should feed every chunk of input data as single argument to this function and finally get MD5 digest by invoking this function without an argument
         return partial
     end
-
-
-
-
 end
 
 function RoCrypt.ripemd128(message: string)
-
-
-
-
-
     local F = function(x, y, z) return bxor(x, bxor(y, z)) end
     local G = function(x, y, z) return bor(band(x, y), band(bnot(x), z)) end
     local H = function(x, y, z) return bxor(bor(x, bnot(y)), z) end
@@ -2469,7 +2481,7 @@ function RoCrypt.ripemd128(message: string)
 
         local fmt = "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
 
-        return string.format(fmt,
+        return format(fmt,
             b0, b1, b2, b3, b4, b5, b6, b7, b8, b9,
             b10, b11, b12, b13, b14, b15)
     end
@@ -2482,11 +2494,6 @@ function RoCrypt.ripemd128(message: string)
 end
 
 function RoCrypt.ripemd160(message: string)
-
-
-
-
-
     local F = function(x, y, z) return bxor(x, bxor(y, z)) end
     local G = function(x, y, z) return bor(band(x, y), band(bnot(x), z)) end
     local H = function(x, y, z) return bxor(bor(x, bnot(y)), z) end
@@ -2801,7 +2808,7 @@ function RoCrypt.ripemd160(message: string)
 
         local fmt = "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
 
-        return string.format(fmt,
+        return format(fmt,
             b0, b1, b2, b3, b4, b5, b6, b7, b8, b9,
             b10, b11, b12, b13, b14, b15, b16, b17, b18, b19)
     end
@@ -2914,21 +2921,21 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
     -- BYTE ARRAY UTILITIES
     local function bytesToMatrix	(t, c, inv) -- Converts a byte array to a 4x4 matrix
         if inv then
-            table.move		(c[1], 1, 4, 1, t)
-            table.move		(c[2], 1, 4, 5, t)
-            table.move		(c[3], 1, 4, 9, t)
-            table.move		(c[4], 1, 4, 13, t)
+            move		(c[1], 1, 4, 1, t)
+            move		(c[2], 1, 4, 5, t)
+            move		(c[3], 1, 4, 9, t)
+            move		(c[4], 1, 4, 13, t)
         else
             for i = 1, #c / 4 do
-                table.clear	(t[i])
-                table.move	(c, i * 4 - 3, i * 4, 1, t[i])
+                clear	(t[i])
+                move	(c, i * 4 - 3, i * 4, 1, t[i])
             end
         end
 
         return t
     end
     local function xorBytes		(t, a, b) 		-- Returns bitwise bxor of all their bytes
-        table.clear		(t)
+        clear		(t)
 
         for i = 1, math.min(#a, #b) do
             table.insert(t, bxor(a[i], b[i]))
@@ -2972,15 +2979,15 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
                 end
             end
 
-            table.clear	(t)
-            xorBytes	(w, table.move(w, 1, 4, 1, t), kc[#kc - is + 1])
+            clear	(t)
+            xorBytes	(w, move(w, 1, 4, 1, t), kc[#kc - is + 1])
             table.insert(kc, w)
         end
 
-        table.clear		(t)
+        clear		(t)
         for i = 1, #kc / 4 do
             table.insert(t, {})
-            table.move	(kc, i * 4 - 3, i * 4, 1, t[#t])
+            move	(kc, i * 4 - 3, i * 4, 1, t[#t])
         end
         return t
     end
@@ -3022,13 +3029,13 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
         if type(a) == "string" then
             local r = {}
 
-            for i = 1, string.len(a), 7997 do
-                table.move({string.byte(a, i, i + 7996)}, 1, 7997, i, r)
+            for i = 1, len(a), 7997 do
+                move({string.byte(a, i, i + 7996)}, 1, 7997, i, r)
             end
             return r
         elseif type(a) == "table" then
             for _, i in ipairs(a) do
-                assert(type(i) == "number" and math.floor(i) == i and 0 <= i and i < 256,
+                assert(type(i) == "number" and floor(i) == i and 0 <= i and i < 256,
                     "Unable to cast value to bytes")
             end
             return a
@@ -3074,7 +3081,7 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
             assert(#iv == 16, "Initialization vector must be 16 bytes long")
         end
         if s then
-            s = math.floor(tonumber(s) or 1)
+            s = floor(tonumber(s) or 1)
             assert(type(s) == "number" and 0 < s and s <= 16, "Segment size must be between 1 and 16 bytes"
             )
         end
@@ -3092,8 +3099,8 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
 
             local b, k, s, t = {}, {}, {{}, {}, {}, {}}, {}
             for i = 1, #plainText, 16 do
-                table.move(plainText, i, i + 15, 1, k)
-                table.move(encrypt(key, km, k, s, t), 1, 16, i, b)
+                move(plainText, i, i + 15, 1, k)
+                move(encrypt(key, km, k, s, t), 1, 16, i, b)
             end
 
             return b
@@ -3104,8 +3111,8 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
 
             local b, k, s, t = {}, {}, {{}, {}, {}, {}}, {}
             for i = 1, #cipherText, 16 do
-                table.move(cipherText, i, i + 15, 1, k)
-                table.move(decrypt(key, km, k, s, t), 1, 16, i, b)
+                move(cipherText, i, i + 15, 1, k)
+                move(decrypt(key, km, k, s, t), 1, 16, i, b)
             end
 
             return b
@@ -3117,8 +3124,8 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
 
             local b, k, p, s, t = {}, {}, initVector, {{}, {}, {}, {}}, {}
             for i = 1, #plainText, 16 do
-                table.move(plainText, i, i + 15, 1, k)
-                table.move(encrypt(key, km, xorBytes(t, k, p), s, p), 1, 16, i, b)
+                move(plainText, i, i + 15, 1, k)
+                move(encrypt(key, km, xorBytes(t, k, p), s, p), 1, 16, i, b)
             end
 
             return b
@@ -3129,9 +3136,9 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
 
             local b, k, p, s, t = {}, {}, initVector, {{}, {}, {}, {}}, {}
             for i = 1, #cipherText, 16 do
-                table.move(cipherText, i, i + 15, 1, k)
-                table.move(xorBytes(k, decrypt(key, km, k, s, t), p), 1, 16, i, b)
-                table.move(cipherText, i, i + 15, 1, p)
+                move(cipherText, i, i + 15, 1, k)
+                move(xorBytes(k, decrypt(key, km, k, s, t), p), 1, 16, i, b)
+                move(cipherText, i, i + 15, 1, p)
             end
 
             return b
@@ -3143,9 +3150,9 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
 
             local b, k, c, p, s, t = {}, {}, initVector, table.create(16, 0), {{}, {}, {}, {}}, {}
             for i = 1, #plainText, 16 do
-                table.move(plainText, i, i + 15, 1, k)
-                table.move(encrypt(key, km, xorBytes(k, xorBytes(t, c, k), p), s, c), 1, 16, i, b)
-                table.move(plainText, i, i + 15, 1, p)
+                move(plainText, i, i + 15, 1, k)
+                move(encrypt(key, km, xorBytes(k, xorBytes(t, c, k), p), s, c), 1, 16, i, b)
+                move(plainText, i, i + 15, 1, p)
             end
 
             return b
@@ -3156,9 +3163,9 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
 
             local b, k, c, p, s, t = {}, {}, initVector, table.create(16, 0), {{}, {}, {}, {}}, {}
             for i = 1, #cipherText, 16 do
-                table.move(cipherText, i, i + 15, 1, k)
-                table.move(xorBytes(p, decrypt(key, km, k, s, t), xorBytes(k, c, p)), 1, 16, i, b)
-                table.move(cipherText, i, i + 15, 1, c)
+                move(cipherText, i, i + 15, 1, k)
+                move(xorBytes(p, decrypt(key, km, k, s, t), xorBytes(k, c, p)), 1, 16, i, b)
+                move(cipherText, i, i + 15, 1, c)
             end
 
             return b
@@ -3172,12 +3179,12 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
 
             local b, k, p, q, s, t = {}, {}, initVector, {}, {{}, {}, {}, {}}, {}
             for i = 1, #plainText, segmentSize do
-                table.move(plainText, i, i + segmentSize - 1, 1, k)
-                table.move(xorBytes(q, encrypt(key, km, p, s, t), k), 1, segmentSize, i, b)
+                move(plainText, i, i + segmentSize - 1, 1, k)
+                move(xorBytes(q, encrypt(key, km, p, s, t), k), 1, segmentSize, i, b)
                 for j = 16, segmentSize + 1, - 1 do
                     table.insert(q, 1, p[j])
                 end
-                table.move(q, 1, 16, 1, p)
+                move(q, 1, 16, 1, p)
             end
 
             return b
@@ -3190,12 +3197,12 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
 
             local b, k, p, q, s, t = {}, {}, initVector, {}, {{}, {}, {}, {}}, {}
             for i = 1, #cipherText, segmentSize do
-                table.move(cipherText, i, i + segmentSize - 1, 1, k)
-                table.move(xorBytes(q, encrypt(key, km, p, s, t), k), 1, segmentSize, i, b)
+                move(cipherText, i, i + segmentSize - 1, 1, k)
+                move(xorBytes(q, encrypt(key, km, p, s, t), k), 1, segmentSize, i, b)
                 for j = 16, segmentSize + 1, - 1 do
                     table.insert(k, 1, p[j])
                 end
-                table.move(k, 1, 16, 1, p)
+                move(k, 1, 16, 1, p)
             end
 
             return b
@@ -3207,9 +3214,9 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
 
             local b, k, p, s, t = {}, {}, initVector, {{}, {}, {}, {}}, {}
             for i = 1, #plainText, 16 do
-                table.move(plainText, i, i + 15, 1, k)
-                table.move(encrypt(key, km, p, s, t), 1, 16, 1, p)
-                table.move(xorBytes(t, k, p), 1, 16, i, b)
+                move(plainText, i, i + 15, 1, k)
+                move(encrypt(key, km, p, s, t), 1, 16, 1, p)
+                move(xorBytes(t, k, p), 1, 16, i, b)
             end
 
             return b
@@ -3224,19 +3231,19 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
             for i = 1, #plainText, 16 do
                 if r then
                     if i > 1 and incBytes(counter.InitValue, counter.LittleEndian) then
-                        table.move(counter.InitOverflow, 1, 16, 1, counter.InitValue)
+                        move(counter.InitOverflow, 1, 16, 1, counter.InitValue)
                     end
-                    table.clear	(c)
-                    table.move	(counter.Prefix, 1, #counter.Prefix, 1, c)
-                    table.move	(counter.InitValue, 1, counter.Length, #c + 1, c)
-                    table.move	(counter.Suffix, 1, #counter.Suffix, #c + 1, c)
+                    clear	(c)
+                    move	(counter.Prefix, 1, #counter.Prefix, 1, c)
+                    move	(counter.InitValue, 1, counter.Length, #c + 1, c)
+                    move	(counter.Suffix, 1, #counter.Suffix, #c + 1, c)
                 else
                     n = convertType(counter(c, (i + 15) / 16))
                     assert		(#n == 16, "Counter must be 16 bytes long")
-                    table.move	(n, 1, 16, 1, c)
+                    move	(n, 1, 16, 1, c)
                 end
-                table.move(plainText, i, i + 15, 1, k)
-                table.move(xorBytes(c, encrypt(key, km, c, s, t), k), 1, 16, i, b)
+                move(plainText, i, i + 15, 1, k)
+                move(xorBytes(c, encrypt(key, km, c, s, t), k), 1, 16, i, b)
             end
 
             return b
@@ -3245,54 +3252,70 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
 end
 
 
-function RoCrypt.hmac(hash_func, key, message, AsBinary)
-    local function HexToBinFunction(hh)
-        return string.char(tonumber(hh, 16))
+function RoCrypt.hmac(hash_func, key, message)
+    local AND_of_two_bytes = {[0] = 0}  -- look-up table (256*256 entries)
+    local idx = 0
+    for y = 0, 127 * 256, 256 do
+        for x = y, y + 127 do
+            x = AND_of_two_bytes[x] * 2
+            AND_of_two_bytes[idx] = x
+            AND_of_two_bytes[idx + 1] = x
+            AND_of_two_bytes[idx + 256] = x
+            AND_of_two_bytes[idx + 257] = x + 1
+            idx = idx + 2
+        end
+        idx = idx + 256
+    end
+    
+    local function XOR_BYTE(x, y)
+        return x + y - 2 * AND_of_two_bytes[x + y * 256]
+    end
+    
+    local function pad_and_xor(str, result_length, byte_for_xor)
+        return string.gsub(str, ".",
+            function(c)
+                return char(XOR_BYTE(byte(c), byte_for_xor))
+            end
+        )..string.rep(char(byte_for_xor), result_length - #str)
+    end
+    
+    local hex_to_bin
+    do
+        function hex_to_bin(hex_string)
+            return (string.gsub(hex_string, "%x%x",
+                function (hh)
+                    return char(tonumber(hh, 16))
+                end
+                ))
+        end
     end
 
-    local function hex2bin(hex_string)
-        return (string.gsub(hex_string, "%x%x", HexToBinFunction))
-    end
-
-    local BinaryStringMap = {}
-    for Index = 0, 255 do
-        BinaryStringMap[string.format("%02x", Index)] = string.char(Index)
-    end
-
-    local block_size_for_HMAC = {
-        [RoCrypt.md5] = 64;
-        [RoCrypt.sha224] = 64;
-        [RoCrypt.sha256] = 64;
-        [RoCrypt.sha384] = 128;
-        [RoCrypt.sha512] = 128;
+    local  block_size_for_HMAC = {
+        [RoCrypt.md5]        =  64,
+        [RoCrypt.sha1]       =  64,
+        [RoCrypt.sha224]     =  64,
+        [RoCrypt.sha256]     =  64,
+        [RoCrypt.sha384]     = 128,
+        [RoCrypt.sha512]     = 128,
+        [RoCrypt.sha3_224]   = 144,  -- (1600 - 2 * 224) / 8
+        [RoCrypt.sha3_256]   = 136,  -- (1600 - 2 * 256) / 8
+        [RoCrypt.sha3_384]   = 104,  -- (1600 - 2 * 384) / 8
+        [RoCrypt.sha3_512]   =  72,  -- (1600 - 2 * 512) / 8
     }
     -- Create an instance (private objects for current calculation)
     local block_size = block_size_for_HMAC[hash_func]
     if not block_size then
-        error("Unknown hash function", 2)
+        error("This function is currently unsupported by HMAC.", 2)
     end
-
-    local KeyLength = #key
-    if KeyLength > block_size then
-        key = string.gsub(hash_func(key), "%x%x", HexToBinFunction)
-        KeyLength = #key
+    if #key > block_size then
+        key = hex_to_bin(hash_func(key))
     end
-
-    local append = hash_func()(string.gsub(key, ".", function(c)
-        return string.char(bxor(string.byte(c), 0x36))
-    end) .. string.rep("6", block_size - KeyLength)) -- 6 = string.char(0x36)
-
+    local append = hash_func()(pad_and_xor(key, block_size, 0x36))
     local result
 
     local function partial(message_part)
         if not message_part then
-            result = result or hash_func(
-                string.gsub(key, ".", function(c)
-                    return string.char(bxor(string.byte(c), 0x5c))
-                end) .. string.rep("\\", block_size - KeyLength) -- \ = string.char(0x5c)
-                    .. (string.gsub(append(), "%x%x", HexToBinFunction))
-            )
-
+            result = result or hash_func(pad_and_xor(key, block_size, 0x5C)..hex_to_bin(append()))
             return result
         elseif result then
             error("Adding more chunks is not allowed after receiving the result", 2)
@@ -3304,14 +3327,15 @@ function RoCrypt.hmac(hash_func, key, message, AsBinary)
 
     if message then
         -- Actually perform calculations and return the HMAC of a message
-        local FinalMessage = partial(message)()
-        return AsBinary and (string.gsub(FinalMessage, "%x%x", BinaryStringMap)) or FinalMessage
+        return partial(message)()
     else
         -- Return function for chunk-by-chunk loading of a message
         -- User should feed every chunk of the message as single argument to this function and finally get HMAC by invoking this function without an argument
         return partial
     end
 end
+
+
 
 
 

@@ -16,6 +16,7 @@ A pure-Lua (5.1) cryptography module supporting:
   - RSA
 - Symmetric algorithms
   - AES
+  - DES, Triple DES
 - Shared-secret algorithms
   - HMAC
 - UID (unique identifier) algorithms
@@ -39,4 +40,30 @@ n, e, d = RSA.newKeys()
 encrypted = RSA.crypt(n, 242351, e)
 decrypted = RSA.crypt(n, encrypted, d)
 print(decrypted[1]) -- Expected output: 242351
+```
+
+```lua
+local DES3 = RoCrypt.des3()
+
+-- define 8 byte key and plaintext
+local key = "secret_k"
+local plaintext = "Hello World"
+
+-- convert strings to byte arrays
+local keyBytes = {string.byte(key, 1, #key)}
+local plaintextBytes = {string.byte(plaintext, 1, #plaintext)}
+
+-- encrypt the plaintext
+local ciphertextBytes = DES3.encrypt(keyBytes, plaintextBytes)
+
+-- convert the ciphertext bytes back to a string
+local ciphertext = ciphertextBytes
+print("Ciphertext: ", ciphertext)
+
+-- decrypt the ciphertext
+local decryptedBytes = DES3.decrypt(keyBytes, ciphertextBytes)
+
+-- convert the decrypted bytes back to a string
+local decrypted = string.char(unpack(decryptedBytes))
+print("Decrypted: " .. decrypted)
 ```

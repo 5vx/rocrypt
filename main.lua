@@ -17,6 +17,7 @@ DESCRIPTION:
         RSA
     Symmetric algorithms
         AES
+        DES, Triple DES
     Shared-secret algorithms
         HMAC
     UID (unique identifier) algorithms
@@ -98,7 +99,8 @@ local bit, E = bit32, nil
 local persistent = {
     snowflake = {
         id = nil,
-        increment = 0
+        increment = 0,
+        last = 0,
     },
     md5 = {
         common_W = {}
@@ -427,7 +429,7 @@ local persistent = {
     keccak_backbone = (function()
         function keccak(block_size_in_bytes, digest_size, is_SHAKE, message)
             local sha2_K_lo, sha2_K_hi, sha2_H_lo, sha2_H_hi, sha3_RC_lo, sha3_RC_hi = {}, {}, {}, {}, {}, {}
-            local HEX64, XOR64A5, lanes_index_base = nil, nil, nil -- defined only for branches that internally use 64-bit integers: "INT64" and "FFI"
+            local HEX64, bxor64A5, lanes_index_base = nil, nil, nil -- defined only for branches that internally use 64-bit integers: "INT64" and "FFI"
             local K_lo_modulo, hi_factor, hi_factor_keccak = 4294967296, 0, 0
             do
                 local sh_reg = 29
@@ -614,7 +616,7 @@ local persistent = {
                         L21_lo, L22_lo, L23_lo, L24_lo, L25_lo = bxor(L23_lo, band(-1 - L24_lo, L25_lo)), bxor(L24_lo, band(-1 - L25_lo, L21_lo)), bxor(L25_lo, band(-1 - L21_lo, L22_lo)), bxor(L21_lo, band(-1 - L22_lo, L23_lo)), bxor(L22_lo, band(-1 - L23_lo, L24_lo))
                         L21_hi, L22_hi, L23_hi, L24_hi, L25_hi = bxor(L23_hi, band(-1 - L24_hi, L25_hi)), bxor(L24_hi, band(-1 - L25_hi, L21_hi)), bxor(L25_hi, band(-1 - L21_hi, L22_hi)), bxor(L21_hi, band(-1 - L22_hi, L23_hi)), bxor(L22_hi, band(-1 - L23_hi, L24_hi))
                         L01_lo = bxor(L01_lo, RC_lo[round_idx])
-                        L01_hi = L01_hi + (RC_hi[round_idx]) -- RC_hi[] is either 0 or 0x80000000, so we could use fast addition instead of slow XOR
+                        L01_hi = L01_hi + (RC_hi[round_idx]) -- RC_hi[] is either 0 or 0x80000000, so we could use fast addition instead of slow bxor
                     end
 
                     lanes_lo[1] = L01_lo
@@ -690,7 +692,7 @@ local persistent = {
             --~     initialize the state S to a string of b 0 bits.
             --~     absorb the input into the state: For each block Pi,
             --~         extend Pi at the end by a string of c 0 bits, yielding one of length b,
-            --~         XOR that with S and
+            --~         bxor that with S and
             --~         apply the block permutation f to the result, yielding a new state S
             --~     initialize Z to be the empty string
             --~     while the length of Z is less than d:
@@ -869,6 +871,227 @@ function RoCrypt.utils.queue()
     return Queue();
 
 end
+
+function RoCrypt.utils.array()
+local Array = {};
+
+Array.size = function(array)
+    return #array;
+end
+
+Array.fromString = function(string)
+    local bytes = {};
+
+    local i = 1;
+    local byte = string.byte(string, i);
+    while byte ~= nil do
+        bytes[i] = byte;
+        i = i + 1;
+        byte = string.byte(string, i);
+    end
+
+    return bytes;
+
+end
+
+Array.toString = function(bytes)
+    local chars = {};
+    local i = 1;
+
+    local byte = bytes[i];
+    while byte ~= nil do
+        chars[i] = string.char(byte);
+        i = i + 1;
+        byte = bytes[i];
+    end
+
+    return table.concat(chars, "");
+end
+
+Array.fromStream = function(stream)
+    local array = {};
+    local i = 1;
+
+    local byte = stream();
+    while byte ~= nil do
+        array[i] = byte;
+        i = i + 1;
+        byte = stream();
+    end
+
+    return array;
+end
+
+Array.readFromQueue = function(queue, size)
+    local array = {};
+
+    for i = 1, size do
+        array[i] = queue.pop();
+    end
+
+    return array;
+end
+
+Array.writeToQueue = function(queue, array)
+    local size = Array.size(array);
+
+    for i = 1, size do
+        queue.push(array[i]);
+    end
+end
+
+Array.toStream = function(array)
+    local queue = RoCrypt.utils.queue();
+    local i = 1;
+
+    local byte = array[i];
+    while byte ~= nil do
+        queue.push(byte);
+        i = i + 1;
+        byte = array[i];
+    end
+
+    return queue.pop;
+end
+
+
+local fromHexTable = {};
+for i = 0, 255 do
+    fromHexTable[string.format("%02X", i)] = i;
+    fromHexTable[string.format("%02x", i)] = i;
+end
+
+Array.fromHex = function(hex)
+    local array = {};
+
+    for i = 1, string.len(hex) / 2 do
+        local h = string.sub(hex, i * 2 - 1, i * 2);
+        array[i] = fromHexTable[h];
+    end
+
+    return array;
+end
+
+
+local toHexTable = {};
+for i = 0, 255 do
+    toHexTable[i] = string.format("%02X", i);
+end
+
+Array.toHex = function(array)
+    local hex = {};
+    local i = 1;
+
+    local byte = array[i];
+    while byte ~= nil do
+        hex[i] = toHexTable[byte];
+        i = i + 1;
+        byte = array[i];
+    end
+
+    return table.concat(hex, "");
+
+end
+
+Array.concat = function(a, b)
+    local concat = {};
+    local out = 1;
+
+    local i = 1;
+    local byte = a[i];
+    while byte ~= nil do
+        concat[out] = byte;
+        i = i + 1;
+        out = out + 1;
+        byte = a[i];
+    end
+
+    i = 1;
+    byte = b[i];
+    while byte ~= nil do
+        concat[out] = byte;
+        i = i + 1;
+        out = out + 1;
+        byte = b[i];
+    end
+
+    return concat;
+end
+
+Array.truncate = function(a, newSize)
+    local x = {};
+
+    for i = 1, newSize do
+        x[i] = a[i];
+    end
+
+    return x;
+end
+
+Array.bxor = function(a, b)
+    local x = {};
+
+    for k, v in pairs(a) do
+        x[k] = bxor(v, b[k]);
+    end
+
+    return x;
+end
+
+Array.substitute = function(input, sbox)
+    local out = {};
+
+    for k, v in pairs(input) do
+        out[k] = sbox[v];
+    end
+
+    return out;
+end
+
+Array.permute = function(input, pbox)
+    local out = {};
+
+    for k, v in pairs(pbox) do
+        out[k] = input[v];
+    end
+
+    return out;
+end
+
+Array.copy = function(input)
+    local out = {};
+
+    for k, v in pairs(input) do
+        out[k] = v;
+    end
+    return out;
+end
+
+Array.slice = function(input, start, stop)
+    local out = {};
+
+    if start == nil then
+        start = 1
+    elseif start < 0 then
+        start = #input + start + 1
+    end
+    if stop == nil then
+        stop = #input
+    elseif stop < 0 then
+        stop = #input + stop + 1
+    end
+
+    for i = start, stop do
+        table.insert(out, input[i])
+    end
+
+    return out;
+end
+
+return Array;
+end
+
+
 function RoCrypt.utils.bytes2word(b0,b1,b2,b3)
     local i = b3; i = lshift(i, 8)
     i = bor(i, b2); i = lshift(i, 8)
@@ -891,6 +1114,15 @@ function RoCrypt.utils.dword2bytes(i)
     return b0, b1, b2, b3, b4, b5, b6, b7
 end
 
+
+function RoCrypt.utils.bytes2hex(byteArray)
+        local hexString = ""
+        for _, byte in ipairs(byteArray) do
+            hexString = hexString .. string.format("%02x", byte)
+        end
+        return hexString
+   
+end
 
 function RoCrypt.sha1(message)
     local md5_K, md5_sha1_H = {}, {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0}
@@ -1810,7 +2042,7 @@ function RoCrypt.base91()
 
 end
 
-function RoCrypt.md2(message)
+function RoCrypt.md2(message: string)
     local queue = RoCrypt.utils.queue()
 
     local SUBST = {
@@ -2823,18 +3055,8 @@ function RoCrypt.ripemd160(message: string)
 
 end
 
+-- @ https://devforum.roblox.com/t/advanced-encryption-standard-in-luau/2009120
 function RoCrypt.aes(message: any?)
-    --[[
-ADVANCED ENCRYPTION STANDARD (AES)
-
-Implementation of secure symmetric-key encryption specifically in Luau
-Includes ECB, CBC, PCBC, CFB, OFB and CTR modes without padding.
-Made by @RobloxGamerPro200007 (verify the original asset)
-
-MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-luau/2009120
-]]
-
-    -- SUBSTITUTION BOXES
     local s_box 	= { 99, 124, 119, 123, 242, 107, 111, 197,  48,   1, 103,  43, 254, 215, 171, 118, 202,
         130, 201, 125, 250,  89,  71, 240, 173, 212, 162, 175, 156, 164, 114, 192, 183, 253, 147,  38,  54,
         63, 247, 204,  52, 165, 229, 241, 113, 216,  49,  21,   4, 199,  35, 195,  24, 150,   5, 154,   7,
@@ -3252,7 +3474,7 @@ MORE INFORMATION: https://devforum.roblox.com/t/advanced-encryption-standard-in-
 end
 
 
-function RoCrypt.hmac(hash_func, key, message)
+function RoCrypt.hmac(hash_func: any, key: any, message: any)
     local AND_of_two_bytes = {[0] = 0}  -- look-up table (256*256 entries)
     local idx = 0
     for y = 0, 127 * 256, 256 do
@@ -3266,19 +3488,19 @@ function RoCrypt.hmac(hash_func, key, message)
         end
         idx = idx + 256
     end
-    
-    local function XOR_BYTE(x, y)
+
+    local function bxor_BYTE(x, y)
         return x + y - 2 * AND_of_two_bytes[x + y * 256]
     end
-    
+
     local function pad_and_xor(str, result_length, byte_for_xor)
         return string.gsub(str, ".",
             function(c)
-                return char(XOR_BYTE(byte(c), byte_for_xor))
+                return char(bxor_BYTE(byte(c), byte_for_xor))
             end
         )..string.rep(char(byte_for_xor), result_length - #str)
     end
-    
+
     local hex_to_bin
     do
         function hex_to_bin(hex_string)
@@ -3337,9 +3559,572 @@ end
 
 
 
+function RoCrypt.des()
+    local Array = RoCrypt.utils.array();
 
 
+    local IN_P = {
+        58, 50, 42, 34, 26, 18, 10,  2,
+        60, 52, 44, 36, 28, 20, 12,  4,
+        62, 54, 46, 38, 30, 22, 14,  6,
+        64, 56, 48, 40, 32, 24, 16,  8,
+        57, 49, 41, 33, 25, 17,  9,  1,
+        59, 51, 43, 35, 27, 19, 11,  3,
+        61, 53, 45, 37, 29, 21, 13,  5,
+        63, 55, 47, 39, 31, 23, 15,  7};
+
+    local OUT_P = {
+        40,  8, 48, 16, 56, 24, 64, 32,
+        39,  7, 47, 15, 55, 23, 63, 31,
+        38,  6, 46, 14, 54, 22, 62, 30,
+        37,  5, 45, 13, 53, 21, 61, 29,
+        36,  4, 44, 12, 52, 20, 60, 28,
+        35,  3, 43, 11, 51, 19, 59, 27,
+        34,  2, 42, 10, 50, 18, 58, 26,
+        33,  1, 41,  9, 49, 17, 57, 25};
+
+    -- add 32 to each because we do the expansion on the full LR table, not just R
+    local EBIT = {
+        32 + 32,  1 + 32,  2 + 32,  3 + 32,  4 + 32,  5 + 32,  4 + 32,  5 + 32,  6 + 32,  7 + 32,  8 + 32,  9 + 32,
+        8 + 32,  9 + 32, 10 + 32, 11 + 32, 12 + 32, 13 + 32, 12 + 32, 13 + 32, 14 + 32, 15 + 32, 16 + 32, 17 + 32,
+        16 + 32, 17 + 32, 18 + 32, 19 + 32, 20 + 32, 21 + 32, 20 + 32, 21 + 32, 22 + 32, 23 + 32, 24 + 32, 25 + 32,
+        24 + 32, 25 + 32, 26 + 32, 27 + 32, 28 + 32, 29 + 32, 28 + 32, 29 + 32, 30 + 32, 31 + 32, 32 + 32,  1 + 32, };
+
+    local LR_SWAP = {
+        33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+        49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+        17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+
+    local PC1 = {
+        57, 49, 41, 33, 25, 17, 9, 1, 58, 50, 42, 34, 26, 18,
+        10, 2, 59, 51, 43, 35, 27, 19, 11, 3, 60, 52, 44, 36,
+        63, 55, 47, 39, 31, 23, 15, 7, 62, 54, 46, 38, 30, 22,
+        14, 6, 61, 53, 45, 37, 29, 21, 13, 5, 28, 20, 12, 4};
+
+    local PC2 = {
+        14, 17, 11, 24, 1, 5, 3, 28, 15, 6, 21, 10,
+        23, 19, 12, 4, 26, 8, 16, 7, 27, 20, 13, 2,
+        41, 52, 31, 37, 47, 55, 30, 40, 51, 45, 33, 48,
+        44, 49, 39, 56, 34, 53, 46, 42, 50, 36, 29, 32};
+
+    local KS1 = {
+        2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 1,
+        30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 29};
+    local KS2 = KS1;
+
+    local KS3 = {
+        3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 1, 2,
+        31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 29, 30};
+
+    local KS4  = KS3;
+    local KS5  = KS3;
+    local KS6  = KS3;
+    local KS7  = KS3;
+    local KS8  = KS3;
+    local KS9  = KS1;
+    local KS10 = KS3;
+    local KS11 = KS3;
+    local KS12 = KS3;
+    local KS13 = KS3;
+    local KS14 = KS3;
+    local KS15 = KS3;
+    local KS16 = KS1;
+
+    local SBOX1 = { 14, 4, 13, 1, 2, 15, 11, 8, 3, 10, 6, 12, 5, 9, 0, 7,
+        0, 15, 7, 4, 14, 2, 13, 1, 10, 6, 12, 11, 9, 5, 3, 8,
+        4, 1, 14, 8, 13, 6, 2, 11, 15, 12, 9, 7, 3, 10, 5, 0,
+        15, 12, 8, 2, 4, 9, 1, 7, 5, 11, 3, 14, 10, 0, 6, 13};
+
+    local SBOX2 = { 15, 1, 8, 14, 6, 11, 3, 4, 9, 7, 2, 13, 12, 0, 5, 10,
+        3, 13, 4, 7, 15, 2, 8, 14, 12, 0, 1, 10, 6, 9, 11, 5,
+        0, 14, 7, 11, 10, 4, 13, 1, 5, 8, 12, 6, 9, 3, 2, 15,
+        13, 8, 10, 1, 3, 15, 4, 2, 11, 6, 7, 12, 0, 5, 14, 9};
+
+    local SBOX3 = { 10, 0, 9, 14, 6, 3, 15, 5, 1, 13, 12, 7, 11, 4, 2, 8,
+        13, 7, 0, 9, 3, 4, 6, 10, 2, 8, 5, 14, 12, 11, 15, 1,
+        13, 6, 4, 9, 8, 15, 3, 0, 11, 1, 2, 12, 5, 10, 14, 7,
+        1, 10, 13, 0, 6, 9, 8, 7, 4, 15, 14, 3, 11, 5, 2, 12};
+
+    local SBOX4 = { 7, 13, 14, 3, 0, 6, 9, 10, 1, 2, 8, 5, 11, 12, 4, 15,
+        13, 8, 11, 5, 6, 15, 0, 3, 4, 7, 2, 12, 1, 10, 14, 9,
+        10, 6, 9, 0, 12, 11, 7, 13, 15, 1, 3, 14, 5, 2, 8, 4,
+        3, 15, 0, 6, 10, 1, 13, 8, 9, 4, 5, 11, 12, 7, 2, 14};
+
+    local SBOX5 = { 2, 12, 4, 1, 7, 10, 11, 6, 8, 5, 3, 15, 13, 0, 14, 9,
+        14, 11, 2, 12, 4, 7, 13, 1, 5, 0, 15, 10, 3, 9, 8, 6,
+        4, 2, 1, 11, 10, 13, 7, 8, 15, 9, 12, 5, 6, 3, 0, 14,
+        11, 8, 12, 7, 1, 14, 2, 13, 6, 15, 0, 9, 10, 4, 5, 3};
+
+    local SBOX6 = { 12, 1, 10, 15, 9, 2, 6, 8, 0, 13, 3, 4, 14, 7, 5, 11,
+        10, 15, 4, 2, 7, 12, 9, 5, 6, 1, 13, 14, 0, 11, 3, 8,
+        9, 14, 15, 5, 2, 8, 12, 3, 7, 0, 4, 10, 1, 13, 11, 6,
+        4, 3, 2, 12, 9, 5, 15, 10, 11, 14, 1, 7, 6, 0, 8, 13};
+
+    local SBOX7 = { 4, 11, 2, 14, 15, 0, 8, 13, 3, 12, 9, 7, 5, 10, 6, 1,
+        13, 0, 11, 7, 4, 9, 1, 10, 14, 3, 5, 12, 2, 15, 8, 6,
+        1, 4, 11, 13, 12, 3, 7, 14, 10, 15, 6, 8, 0, 5, 9, 2,
+        6, 11, 13, 8, 1, 4, 10, 7, 9, 5, 0, 15, 14, 2, 3, 12};
+
+    local SBOX8 = { 13, 2, 8, 4, 6, 15, 11, 1, 10, 9, 3, 14, 5, 0, 12, 7,
+        1, 15, 13, 8, 10, 3, 7, 4, 12, 5, 6, 11, 0, 14, 9, 2,
+        7, 11, 4, 1, 9, 12, 14, 2, 0, 6, 10, 13, 15, 3, 5, 8,
+        2, 1, 14, 7, 4, 10, 8, 13, 15, 12, 9, 0, 3, 5, 6, 11};
+
+    local ROUND_P = { 16, 7, 20, 21, 29, 12, 28, 17, 1, 15, 23, 26, 5, 18, 31, 10,
+        2, 8, 24, 14, 32, 27, 3, 9, 19, 13, 30, 6, 22, 11, 4, 25};
+
+    local permute = Array.permute;
+
+    local unpackBytes = function(bytes)
+        local bits = {};
+
+        for _, b in pairs(bytes) do
+            table.insert(bits, rshift(band(b, 0x80), 7));
+            table.insert(bits, rshift(band(b, 0x40), 6));
+            table.insert(bits, rshift(band(b, 0x20), 5));
+            table.insert(bits, rshift(band(b, 0x10), 4));
+            table.insert(bits, rshift(band(b, 0x08), 3));
+            table.insert(bits, rshift(band(b, 0x04), 2));
+            table.insert(bits, rshift(band(b, 0x02), 1));
+            table.insert(bits,      band(b, 0x01)   );
+        end
+
+        return bits;
+    end
+
+    local packBytes = function(bits)
+        local bytes = {}
+
+        for k, _ in pairs(bits) do
+            local index = math.floor((k - 1) / 8) + 1;
+            local shift = 7 - math.fmod((k - 1), 8);
+
+            local bit = bits[k];
+            local byte = bytes[index];
+
+            if not byte then byte = 0x00; end
+            byte = bor(byte, lshift(bit, shift));
+            bytes[index] = byte;
+        end
+
+        return bytes;
+    end
+
+    local mix = function(LR, key)
+
+        local ER = permute(LR, EBIT);
+
+        for k, _ in pairs(ER) do
+            ER[k] = bxor(ER[k], key[k]);
+        end
+
+        local FRK = {};
+
+        local S = 0x00;
+        S = bor(S, ER[1]); S = lshift(S, 1);
+        S = bor(S, ER[6]); S = lshift(S, 1);
+        S = bor(S, ER[2]); S = lshift(S, 1);
+        S = bor(S, ER[3]); S = lshift(S, 1);
+        S = bor(S, ER[4]); S = lshift(S, 1);
+        S = bor(S, ER[5]); S = S + 1;
+        S = SBOX1[S];
+
+        FRK[1] = rshift(band(S, 0x08), 3);
+        FRK[2] = rshift(band(S, 0x04), 2);
+        FRK[3] = rshift(band(S, 0x02), 1);
+        FRK[4] = band(S, 0x01);
+
+
+        S = 0x00;
+        S = bor(S, ER[1 + 6]); S = lshift(S, 1);
+        S = bor(S, ER[6 + 6]); S = lshift(S, 1);
+        S = bor(S, ER[2 + 6]); S = lshift(S, 1);
+        S = bor(S, ER[3 + 6]); S = lshift(S, 1);
+        S = bor(S, ER[4 + 6]); S = lshift(S, 1);
+        S = bor(S, ER[5 + 6]); S = S + 1;
+        S = SBOX2[S];
+
+        FRK[5] = rshift(band(S, 0x08), 3);
+        FRK[6] = rshift(band(S, 0x04), 2);
+        FRK[7] = rshift(band(S, 0x02), 1);
+        FRK[8] = band(S, 0x01);
+
+
+        S = 0x00;
+        S = bor(S, ER[1 + 12]); S = lshift(S, 1);
+        S = bor(S, ER[6 + 12]); S = lshift(S, 1);
+        S = bor(S, ER[2 + 12]); S = lshift(S, 1);
+        S = bor(S, ER[3 + 12]); S = lshift(S, 1);
+        S = bor(S, ER[4 + 12]); S = lshift(S, 1);
+        S = bor(S, ER[5 + 12]); S = S + 1;
+        S = SBOX3[S];
+
+        FRK[9] = rshift(band(S, 0x08), 3);
+        FRK[10] = rshift(band(S, 0x04), 2);
+        FRK[11] = rshift(band(S, 0x02), 1);
+        FRK[12] = band(S, 0x01);
+
+
+        S = 0x00;
+        S = bor(S, ER[1 + 18]); S = lshift(S, 1);
+        S = bor(S, ER[6 + 18]); S = lshift(S, 1);
+        S = bor(S, ER[2 + 18]); S = lshift(S, 1);
+        S = bor(S, ER[3 + 18]); S = lshift(S, 1);
+        S = bor(S, ER[4 + 18]); S = lshift(S, 1);
+        S = bor(S, ER[5 + 18]); S = S + 1;
+        S = SBOX4[S];
+
+        FRK[13] = rshift(band(S, 0x08), 3);
+        FRK[14] = rshift(band(S, 0x04), 2);
+        FRK[15] = rshift(band(S, 0x02), 1);
+        FRK[16] = band(S, 0x01);
+
+
+        S = 0x00;
+        S = bor(S, ER[1 + 24]); S = lshift(S, 1);
+        S = bor(S, ER[6 + 24]); S = lshift(S, 1);
+        S = bor(S, ER[2 + 24]); S = lshift(S, 1);
+        S = bor(S, ER[3 + 24]); S = lshift(S, 1);
+        S = bor(S, ER[4 + 24]); S = lshift(S, 1);
+        S = bor(S, ER[5 + 24]); S = S + 1;
+        S = SBOX5[S];
+
+        FRK[17] = rshift(band(S, 0x08), 3);
+        FRK[18] = rshift(band(S, 0x04), 2);
+        FRK[19] = rshift(band(S, 0x02), 1);
+        FRK[20] = band(S, 0x01);
+
+
+        S = 0x00;
+        S = bor(S, ER[1 + 30]); S = lshift(S, 1);
+        S = bor(S, ER[6 + 30]); S = lshift(S, 1);
+        S = bor(S, ER[2 + 30]); S = lshift(S, 1);
+        S = bor(S, ER[3 + 30]); S = lshift(S, 1);
+        S = bor(S, ER[4 + 30]); S = lshift(S, 1);
+        S = bor(S, ER[5 + 30]); S = S + 1;
+        S = SBOX6[S];
+
+        FRK[21] = rshift(band(S, 0x08), 3);
+        FRK[22] = rshift(band(S, 0x04), 2);
+        FRK[23] = rshift(band(S, 0x02), 1);
+        FRK[24] = band(S, 0x01);
+
+
+        S = 0x00;
+        S = bor(S, ER[1 + 36]); S = lshift(S, 1);
+        S = bor(S, ER[6 + 36]); S = lshift(S, 1);
+        S = bor(S, ER[2 + 36]); S = lshift(S, 1);
+        S = bor(S, ER[3 + 36]); S = lshift(S, 1);
+        S = bor(S, ER[4 + 36]); S = lshift(S, 1);
+        S = bor(S, ER[5 + 36]); S = S + 1;
+        S = SBOX7[S];
+
+        FRK[25] = rshift(band(S, 0x08), 3);
+        FRK[26] = rshift(band(S, 0x04), 2);
+        FRK[27] = rshift(band(S, 0x02), 1);
+        FRK[28] = band(S, 0x01);
+
+
+        S = 0x00;
+        S = bor(S, ER[1 + 42]); S = lshift(S, 1);
+        S = bor(S, ER[6 + 42]); S = lshift(S, 1);
+        S = bor(S, ER[2 + 42]); S = lshift(S, 1);
+        S = bor(S, ER[3 + 42]); S = lshift(S, 1);
+        S = bor(S, ER[4 + 42]); S = lshift(S, 1);
+        S = bor(S, ER[5 + 42]); S = S + 1;
+        S = SBOX8[S];
+
+        FRK[29] = rshift(band(S, 0x08), 3);
+        FRK[30] = rshift(band(S, 0x04), 2);
+        FRK[31] = rshift(band(S, 0x02), 1);
+        FRK[32] = band(S, 0x01);
+
+        FRK = permute(FRK, ROUND_P);
+
+        return FRK;
+    end
+
+    local DES = {};
+
+    DES.blockSize = 8;
+
+    DES.encrypt = function(keyBlock, inputBlock)
+
+        local LR = unpackBytes(inputBlock);
+        local keyBits = unpackBytes(keyBlock);
+
+
+        local CD = permute(keyBits, PC1);
+
+        --key schedule
+        CD = permute(CD, KS1); local KEY1 = permute(CD, PC2);
+        CD = permute(CD, KS2); local KEY2 = permute(CD, PC2);
+        CD = permute(CD, KS3); local KEY3 = permute(CD, PC2);
+        CD = permute(CD, KS4); local KEY4 = permute(CD, PC2);
+        CD = permute(CD, KS5); local KEY5 = permute(CD, PC2);
+        CD = permute(CD, KS6); local KEY6 = permute(CD, PC2);
+        CD = permute(CD, KS7); local KEY7 = permute(CD, PC2);
+        CD = permute(CD, KS8); local KEY8 = permute(CD, PC2);
+        CD = permute(CD, KS9); local KEY9 = permute(CD, PC2);
+        CD = permute(CD, KS10); local KEY10 = permute(CD, PC2);
+        CD = permute(CD, KS11); local KEY11 = permute(CD, PC2);
+        CD = permute(CD, KS12); local KEY12 = permute(CD, PC2);
+        CD = permute(CD, KS13); local KEY13 = permute(CD, PC2);
+        CD = permute(CD, KS14); local KEY14 = permute(CD, PC2);
+        CD = permute(CD, KS15); local KEY15 = permute(CD, PC2);
+        CD = permute(CD, KS16); local KEY16 = permute(CD, PC2);
+
+        --input permutation
+        LR = permute(LR, IN_P);
+
+        --rounds
+        local frk = mix(LR, KEY1);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY2);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY3);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY4);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY5);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY6);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY7);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY8);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY9);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY10);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY11);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY12);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY13);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY14);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY15);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY16);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+
+        --output permutation
+        LR = permute(LR, OUT_P);
+
+        local outputBlock = packBytes(LR);
+        return outputBlock;
+    end
+
+    DES.decrypt = function(keyBlock, inputBlock)
+
+
+        local LR = unpackBytes(inputBlock);
+        local keyBits = unpackBytes(keyBlock);
+
+
+        local CD = permute(keyBits, PC1);
+
+        --key schedule
+        CD = permute(CD, KS1); local KEY1 = permute(CD, PC2);
+        CD = permute(CD, KS2); local KEY2 = permute(CD, PC2);
+        CD = permute(CD, KS3); local KEY3 = permute(CD, PC2);
+        CD = permute(CD, KS4); local KEY4 = permute(CD, PC2);
+        CD = permute(CD, KS5); local KEY5 = permute(CD, PC2);
+        CD = permute(CD, KS6); local KEY6 = permute(CD, PC2);
+        CD = permute(CD, KS7); local KEY7 = permute(CD, PC2);
+        CD = permute(CD, KS8); local KEY8 = permute(CD, PC2);
+        CD = permute(CD, KS9); local KEY9 = permute(CD, PC2);
+        CD = permute(CD, KS10); local KEY10 = permute(CD, PC2);
+        CD = permute(CD, KS11); local KEY11 = permute(CD, PC2);
+        CD = permute(CD, KS12); local KEY12 = permute(CD, PC2);
+        CD = permute(CD, KS13); local KEY13 = permute(CD, PC2);
+        CD = permute(CD, KS14); local KEY14 = permute(CD, PC2);
+        CD = permute(CD, KS15); local KEY15 = permute(CD, PC2);
+        CD = permute(CD, KS16); local KEY16 = permute(CD, PC2);
+
+        --input permutation
+        LR = permute(LR, IN_P);
+
+        --rounds
+        local frk = mix(LR, KEY16);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY15);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY14);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY13);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY12);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY11);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY10);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY9);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY8);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY7);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY6);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY5);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY4);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY3);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY2);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+        LR = permute(LR, LR_SWAP);
+
+        frk = mix(LR, KEY1);
+        for k, _ in pairs(frk) do LR[k] = bxor(LR[k], frk[k]); end
+
+        --output permutation
+        LR = permute(LR, OUT_P);
+
+        local outputBlock = packBytes(LR);
+        return outputBlock;
+    end
+
+    return DES;
+end
+
+function RoCrypt.des3()
+
+    local Array = RoCrypt.utils.array()
+
+    local DES = RoCrypt.des()
+
+    local DES3 = {};
+
+    local getKeys = function(keyBlock)
+        local size = Array.size(keyBlock)
+
+        local key1;
+        local key2;
+        local key3;
+
+        if (size == 8) then
+            key1 = keyBlock;
+            key2 = keyBlock;
+            key3 = keyBlock;
+        elseif (size == 16) then
+            key1 = Array.slice(keyBlock, 1, 8);
+            key2 = Array.slice(keyBlock, 9, 16);
+            key3 = key1;
+        elseif (size == 24) then
+            key1 = Array.slice(keyBlock, 1, 8);
+            key2 = Array.slice(keyBlock, 9, 16);
+            key3 = Array.slice(keyBlock, 17, 24);
+        else
+            assert(false, "Invalid key size for 3DES");
+        end
+
+        return key1, key2, key3;
+    end
+
+    DES3.blockSize = DES.blockSize;
+
+    DES3.encrypt = function(keyBlock, inputBlock)
+        local key1;
+        local key2;
+        local key3;
+
+        key1, key2, key3 = getKeys(keyBlock);
+
+        local block = inputBlock;
+        block = DES.encrypt(key1, block);
+        block = DES.decrypt(key2, block);
+        block = DES.encrypt(key3, block);
+
+        return block;
+    end
+
+    DES3.decrypt = function(keyBlock, inputBlock)
+        local key1;
+        local key2;
+        local key3;
+
+        key1, key2, key3 = getKeys(keyBlock);
+
+        local block = inputBlock;
+        block = DES.decrypt(key3, block);
+        block = DES.encrypt(key2, block);
+        block = DES.decrypt(key1, block);
+
+        return block;
+    end
+
+    return DES3;
+end
 
 
 
 return RoCrypt
+
+
+

@@ -2,7 +2,7 @@
 RoCrypt
 ----------------------------------------------------------------------------------------
 DESCRIPTION:
-    TODO: Blowfish, Bcrypt, Argon2, (?) BLAKE3, BLAKE2S, BLAKE2B
+    TODO: GZIP (?), Blowfish, Bcrypt, Argon2, (?) BLAKE3, BLAKE2S, BLAKE2B, DES, DES3
 	This module contains cryptographic hash functions (CHF)
 	   MD2, MD4, MD5 
 	   RIPEMD-128, RIPEMD-160
@@ -15,11 +15,13 @@ DESCRIPTION:
         Base91
     Asymmetric algorithms
         RSA
-    Symmetric algorithms
+    Symmetric block cipher algorithms
         AES
         DES, Triple DES
     Shared-secret algorithms
         HMAC
+    Compression algorithms
+        LZ4
     UID (unique identifier) algorithms
         Snowflake
 	All written in pure Lua.
@@ -80,6 +82,9 @@ github.com/somesocks/lua-lockbox
 
 RoCrypt = {
     utils = {
+    },
+    compression = {
+        
     }
 }
 
@@ -105,718 +110,10 @@ local persistent = {
     md5 = {
         common_W = {}
     },
-    sha_backbone = (function()
-        local AND_of_two_bytes = {}  -- look-up table (256*256 entries)
-        for idx = 0, 65535 do
-            local x = idx % 256
-            local y = (idx - x) / 256
-            local res = 0
-            local w = 1
-            while x * y ~= 0 do
-                local rx = x % 2
-                local ry = y % 2
-                res = res + rx * ry * w
-                x = (x - rx) / 2
-                y = (y - ry) / 2
-                w = w * 2
-            end
-            AND_of_two_bytes[idx] = res
-        end
-
-        local function HEX(x)
-            return format("%08x", x % 4294967296)
-        end
-        local sha2_K_lo, sha2_K_hi, sha2_H_lo, sha2_H_hi = {}, {}, {}, {}
-        local sha2_H_ext256 = {[224] = {}, [256] = sha2_H_hi}
-        local sha2_H_ext512_lo, sha2_H_ext512_hi = {[384] = {}, [512] = sha2_H_lo}, {[384] = {}, [512] = sha2_H_hi}
-
-        local common_W = {}
-
-        local function sha256_feed_64(H, K, str, W, offs, size)
-            for pos = offs, size + offs - 1, 64 do
-                for j = 1, 16 do
-                    pos = pos + 4
-                    local a, b, c, d = byte(str, pos - 3, pos)
-                    W[j] = ((a * 256 + b) * 256 + c) * 256 + d
-                end
-                for j = 17, 64 do
-                    local a, b = W[j-15], W[j-2]
-                    W[j] = bxor(rrotate(a, 7), lrotate(a, 14), rshift(a, 3)) + bxor(lrotate(b, 15), lrotate(b, 13), rshift(b, 10)) + W[j-7] + W[j-16]
-                end
-                local a, b, c, d, e, f, g, h, z = H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8], nil
-                for j = 1, 64 do
-                    z = bxor(rrotate(e, 6), rrotate(e, 11), lrotate(e, 7)) + band(e, f) + band(-1-e, g) + h + K[j] + W[j]
-                    h = g
-                    g = f
-                    f = e
-                    e = z + d
-                    d = c
-                    c = b
-                    b = a
-                    a = z + band(d, c) + band(a, bxor(d, c)) + bxor(rrotate(a, 2), rrotate(a, 13), lrotate(a, 10))
-                end
-                H[1], H[2], H[3], H[4] = (a + H[1]) % 4294967296, (b + H[2]) % 4294967296, (c + H[3]) % 4294967296, (d + H[4]) % 4294967296
-                H[5], H[6], H[7], H[8] = (e + H[5]) % 4294967296, (f + H[6]) % 4294967296, (g + H[7]) % 4294967296, (h + H[8]) % 4294967296
-            end
-        end
-
-        local function sha512_feed_128(H_lo, H_hi, K_lo, K_hi, str, W, offs, size)
-            -- offs >= 0, size >= 0, size is multiple of 128
-            -- W1_hi, W1_lo, W2_hi, W2_lo, ...   Wk_hi = W[2*k-1], Wk_lo = W[2*k]
-            for pos = offs, size + offs - 1, 128 do
-                for j = 1, 32 do
-                    pos = pos + 4
-                    local a, b, c, d = byte(str, pos - 3, pos)
-                    W[j] = ((a * 256 + b) * 256 + c) * 256 + d
-                end
-                local tmp1, tmp2
-                for jj = 17 * 2, 80 * 2, 2 do
-                    local a_lo, a_hi, b_lo, b_hi = W[jj-30], W[jj-31], W[jj-4], W[jj-5]
-                    tmp1 = bxor(rshift(a_lo, 1) + lshift(a_hi, 31), rshift(a_lo, 8) + lshift(a_hi, 24), rshift(a_lo, 7) + lshift(a_hi, 25)) + bxor(rshift(b_lo, 19) + lshift(b_hi, 13), lshift(b_lo, 3) + rshift(b_hi, 29), rshift(b_lo, 6) + lshift(b_hi, 26)) + W[jj-14] + W[jj-32]
-                    tmp2 = tmp1 % 4294967296
-                    W[jj-1] = bxor(rshift(a_hi, 1) + lshift(a_lo, 31), rshift(a_hi, 8) + lshift(a_lo, 24), rshift(a_hi, 7)) + bxor(rshift(b_hi, 19) + lshift(b_lo, 13), lshift(b_hi, 3) + rshift(b_lo, 29), rshift(b_hi, 6)) + W[jj-15] + W[jj-33] + (tmp1 - tmp2) / 4294967296
-                    W[jj] = tmp2
-                end
-                local a_lo, b_lo, c_lo, d_lo, e_lo, f_lo, g_lo, h_lo, z_lo = H_lo[1], H_lo[2], H_lo[3], H_lo[4], H_lo[5], H_lo[6], H_lo[7], H_lo[8], nil
-                local a_hi, b_hi, c_hi, d_hi, e_hi, f_hi, g_hi, h_hi, z_hi = H_hi[1], H_hi[2], H_hi[3], H_hi[4], H_hi[5], H_hi[6], H_hi[7], H_hi[8], nil
-                for j = 1, 80 do
-                    local jj = 2 * j
-                    tmp1 = bxor(rshift(e_lo, 14) + lshift(e_hi, 18), rshift(e_lo, 18) + lshift(e_hi, 14), lshift(e_lo, 23) + rshift(e_hi, 9)) + band(e_lo, f_lo) + band(-1-e_lo, g_lo) + h_lo + K_lo[j] + W[jj]
-                    z_lo = tmp1 % 4294967296
-                    z_hi = bxor(rshift(e_hi, 14) + lshift(e_lo, 18), rshift(e_hi, 18) + lshift(e_lo, 14), lshift(e_hi, 23) + rshift(e_lo, 9)) + band(e_hi, f_hi) + band(-1-e_hi, g_hi) + h_hi + K_hi[j] + W[jj-1] + (tmp1 - z_lo) / 4294967296
-                    h_lo = g_lo
-                    h_hi = g_hi
-                    g_lo = f_lo
-                    g_hi = f_hi
-                    f_lo = e_lo
-                    f_hi = e_hi
-                    tmp1 = z_lo + d_lo
-                    e_lo = tmp1 % 4294967296
-                    e_hi = z_hi + d_hi + (tmp1 - e_lo) / 4294967296
-                    d_lo = c_lo
-                    d_hi = c_hi
-                    c_lo = b_lo
-                    c_hi = b_hi
-                    b_lo = a_lo
-                    b_hi = a_hi
-                    tmp1 = z_lo + band(d_lo, c_lo) + band(b_lo, bxor(d_lo, c_lo)) + bxor(rshift(b_lo, 28) + lshift(b_hi, 4), lshift(b_lo, 30) + rshift(b_hi, 2), lshift(b_lo, 25) + rshift(b_hi, 7))
-                    a_lo = tmp1 % 4294967296
-                    a_hi = z_hi + (band(d_hi, c_hi) + band(b_hi, bxor(d_hi, c_hi))) + bxor(rshift(b_hi, 28) + lshift(b_lo, 4), lshift(b_hi, 30) + rshift(b_lo, 2), lshift(b_hi, 25) + rshift(b_lo, 7)) + (tmp1 - a_lo) / 4294967296
-                end
-                tmp1 = H_lo[1] + a_lo
-                tmp2 = tmp1 % 4294967296
-                H_lo[1], H_hi[1] = tmp2, (H_hi[1] + a_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
-                tmp1 = H_lo[2] + b_lo
-                tmp2 = tmp1 % 4294967296
-                H_lo[2], H_hi[2] = tmp2, (H_hi[2] + b_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
-                tmp1 = H_lo[3] + c_lo
-                tmp2 = tmp1 % 4294967296
-                H_lo[3], H_hi[3] = tmp2, (H_hi[3] + c_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
-                tmp1 = H_lo[4] + d_lo
-                tmp2 = tmp1 % 4294967296
-                H_lo[4], H_hi[4] = tmp2, (H_hi[4] + d_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
-                tmp1 = H_lo[5] + e_lo
-                tmp2 = tmp1 % 4294967296
-                H_lo[5], H_hi[5] = tmp2, (H_hi[5] + e_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
-                tmp1 = H_lo[6] + f_lo
-                tmp2 = tmp1 % 4294967296
-                H_lo[6], H_hi[6] = tmp2, (H_hi[6] + f_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
-                tmp1 = H_lo[7] + g_lo
-                tmp2 = tmp1 % 4294967296
-                H_lo[7], H_hi[7] = tmp2, (H_hi[7] + g_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
-                tmp1 = H_lo[8] + h_lo
-                tmp2 = tmp1 % 4294967296
-                H_lo[8], H_hi[8] = tmp2, (H_hi[8] + h_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
-            end
-        end
-
-        --------------------------------------------------------------------------------
-        -- CALCULATING THE MAGIC NUMBERS (roots of primes)
-        --------------------------------------------------------------------------------
-
-        do
-            local function mul(src1, src2, factor, result_length)
-                -- Long arithmetic multiplication: src1 * src2 * factor
-                -- src1, src2 - long integers (arrays of digits in base 2^24)
-                -- factor - short integer
-                local result = {}
-                local carry = 0
-                local value = 0.0
-                local weight = 1.0
-                for j = 1, result_length do
-                    local prod = 0
-                    for k = math.max(1, j + 1 - #src2), math.min(j, #src1) do
-                        prod = prod + src1[k] * src2[j + 1 - k]
-                    end
-                    carry = carry + prod * factor
-                    local digit = carry % 16777216
-                    result[j] = digit
-                    carry = floor(carry / 16777216)
-                    value = value + digit * weight
-                    weight = weight * 2^24
-                end
-                return result,value
-            end
-
-            local idx, step, p, one  = 0, {4, 1, 2, -2, 2}, 4, {1}
-            local sqrt_hi, sqrt_lo, idx_disp = sha2_H_hi, sha2_H_lo, 0
-            repeat
-                p = p + step[p % 6]
-                local d = 1
-                repeat
-                    d = d + step[d % 6]
-                    if d * d > p then
-                        idx = idx + 1
-                        local root = p^(1/3)
-                        local R = mul({floor(root * 2^40)}, one, 1, 2)
-                        local _, delta = mul(R, mul(R, R, 1, 4), -1, 4)
-                        local hi = R[2] % 65536 * 65536 + floor(R[1] / 256)
-                        local lo = R[1] % 256 * 16777216 + floor(delta * (2^-56 / 3) * root / p)
-                        sha2_K_hi[idx], sha2_K_lo[idx] = hi, lo
-                        if idx < 17 then
-                            root = p^(1/2)
-                            R = mul({floor(root * 2^40)}, one, 1, 2)
-                            _, delta = mul(R, R, -1, 2)
-                            hi = R[2] % 65536 * 65536 + floor(R[1] / 256)
-                            lo = R[1] % 256 * 16777216 + floor(delta * 2^-17 / root)
-                            sha2_H_ext256[224][idx + idx_disp] = lo
-                            sqrt_hi[idx + idx_disp], sqrt_lo[idx + idx_disp] = hi, lo
-                            if idx == 8 then
-                                sqrt_hi, sqrt_lo, idx_disp = sha2_H_ext512_hi[384], sha2_H_ext512_lo[384], -8
-                            end
-                        end
-                        break
-                    end
-                until p % d == 0
-            until idx > 79
-        end
-
-        -- Calculating IV for SHA512/224 and SHA512/256
-        for width = 224, 256, 32 do
-            local H_lo, H_hi = {}, {}
-            for j = 1, 8 do
-                H_lo[j] = bxor(sha2_H_lo[j], 0xa5a5a5a5)
-                H_hi[j] = bxor(sha2_H_hi[j], 0xa5a5a5a5)
-            end
-            sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, "SHA-512/"..tonumber(width).."\128"..rep("\0", 115).."\88", common_W, 0, 128)
-            sha2_H_ext512_lo[width] = H_lo
-            sha2_H_ext512_hi[width] = H_hi
-        end
-
-        --------------------------------------------------------------------------------
-        -- FINAL FUNCTIONS
-        --------------------------------------------------------------------------------
-
-        function sha256ext(width, text)
-
-            -- Create an instance (private objects for current calculation)
-            local H, length, tail = {unpack(sha2_H_ext256[width])}, 0, ""
-
-            local function partial(text_part)
-                if text_part then
-                    if tail then
-                        length = length + #text_part
-                        local offs = 0
-                        if tail ~= "" and #tail + #text_part >= 64 then
-                            offs = 64 - #tail
-                            sha256_feed_64(H, sha2_K_hi, tail..sub(text_part, 1, offs), common_W, 0, 64)
-                            tail = ""
-                        end
-                        local size = #text_part - offs
-                        local size_tail = size % 64
-                        sha256_feed_64(H, sha2_K_hi, text_part, common_W, offs, size - size_tail)
-                        tail = tail..sub(text_part, #text_part + 1 - size_tail)
-                        return partial
-                    else
-                        error("Adding more chunks is not allowed after asking for final result", 2)
-                    end
-                else
-                    if tail then
-                        local final_blocks = {tail, "\128", rep("\0", (-9 - length) % 64 + 1)}
-                        tail = nil
-                        -- Assuming user data length is shorter than 2^53 bytes
-                        -- Anyway, it looks very unrealistic that one would spend enough time to process a 2^53 bytes of data by using this Lua script :-)
-                        -- 2^53 bytes = 2^56 bits, so "bit-counter" fits in 7 bytes
-                        length = length * (8 / 256^7)  -- convert "byte-counter" to "bit-counter" and move floating point to the left
-                        for j = 4, 10 do
-                            length = length % 1 * 256
-                            final_blocks[j] = char(floor(length))
-                        end
-                        final_blocks = table.concat(final_blocks)
-                        sha256_feed_64(H, sha2_K_hi, final_blocks, common_W, 0, #final_blocks)
-                        local max_reg = width / 32
-                        for j = 1, max_reg do
-                            H[j] = HEX(H[j])
-                        end
-                        H = table.concat(H, "", 1, max_reg)
-                    end
-                    return H
-                end
-            end
-
-            if text then
-                -- Actually perform calculations and return the SHA256 digest of a message
-                return partial(text)()
-            else
-                -- Return function for partial chunk loading
-                -- User should feed every chunks of input data as single argument to this function and receive SHA256 digest by invoking this function without an argument
-                return partial
-            end
-
-        end
-
-
-        function sha512ext(width, text)
-
-            -- Create an instance (private objects for current calculation)
-            local length, tail, H_lo, H_hi = 0, "", {unpack(sha2_H_ext512_lo[width])}, {unpack(sha2_H_ext512_hi[width])}
-
-            local function partial(text_part)
-                if text_part then
-                    if tail then
-                        length = length + #text_part
-                        local offs = 0
-                        if tail ~= "" and #tail + #text_part >= 128 then
-                            offs = 128 - #tail
-                            sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, tail..sub(text_part, 1, offs), common_W, 0, 128)
-                            tail = ""
-                        end
-                        local size = #text_part - offs
-                        local size_tail = size % 128
-                        sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, text_part, common_W, offs, size - size_tail)
-                        tail = tail..sub(text_part, #text_part + 1 - size_tail)
-                        return partial
-                    else
-                        error("Adding more chunks is not allowed after asking for final result", 2)
-                    end
-                else
-                    if tail then
-                        local final_blocks = {tail, "\128", rep("\0", (-17-length) % 128 + 9)}
-                        tail = nil
-                        -- Assuming user data length is shorter than 2^53 bytes
-                        -- 2^53 bytes = 2^56 bits, so "bit-counter" fits in 7 bytes
-                        length = length * (8 / 256^7)  -- convert "byte-counter" to "bit-counter" and move floating point to the left
-                        for j = 4, 10 do
-                            length = length % 1 * 256
-                            final_blocks[j] = char(floor(length))
-                        end
-                        final_blocks = table.concat(final_blocks)
-                        sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, final_blocks, common_W, 0, #final_blocks)
-                        local max_reg = math.ceil(width / 64)
-                        for j = 1, max_reg do
-                            H_lo[j] = HEX(H_hi[j])..HEX(H_lo[j])
-                        end
-                        H_hi = nil
-                        H_lo = table.concat(H_lo, "", 1, max_reg):sub(1, width / 4)
-                    end
-                    return H_lo
-                end
-            end
-
-            if text then
-                -- Actually perform calculations and return the SHA256 digest of a message
-                return partial(text)()
-            else
-                -- Return function for partial chunk loading
-                -- User should feed every chunks of input data as single argument to this function and receive SHA256 digest by invoking this function without an argument
-                return partial
-            end
-
-        end
-
-
-    end)(),
-    keccak_backbone = (function()
-        function keccak(block_size_in_bytes, digest_size, is_SHAKE, message)
-            local sha2_K_lo, sha2_K_hi, sha2_H_lo, sha2_H_hi, sha3_RC_lo, sha3_RC_hi = {}, {}, {}, {}, {}, {}
-            local HEX64, bxor64A5, lanes_index_base = nil, nil, nil -- defined only for branches that internally use 64-bit integers: "INT64" and "FFI"
-            local K_lo_modulo, hi_factor, hi_factor_keccak = 4294967296, 0, 0
-            do
-                local sh_reg = 29
-                local function next_bit()
-                    local r = sh_reg % 2
-                    sh_reg = bxor((sh_reg - r) / 2, 142 * r)
-                    return r
-                end
-
-                for idx = 1, 24 do
-                    local lo, m = 0, nil
-                    for _ = 1, 6 do
-                        m = m and m * m * 2 or 1
-                        lo = lo + next_bit() * m
-                    end
-
-                    local hi = next_bit() * m
-                    sha3_RC_hi[idx], sha3_RC_lo[idx] = hi, lo + hi * hi_factor_keccak
-                end
-            end
-
-
-
-
-            local function keccak_feed(lanes_lo, lanes_hi, str, offs, size, block_size_in_bytes)
-                -- This is an example of a Lua function having 79 local variables :-)
-                -- offs >= 0, size >= 0, size is multiple of block_size_in_bytes, block_size_in_bytes is positive multiple of 8
-                local RC_lo, RC_hi = sha3_RC_lo, sha3_RC_hi
-                local qwords_qty = block_size_in_bytes / 8
-                for pos = offs, offs + size - 1, block_size_in_bytes do
-                    for j = 1, qwords_qty do
-                        local a, b, c, d = string.byte(str, pos + 1, pos + 4)
-                        lanes_lo[j] = bxor(lanes_lo[j], ((d * 256 + c) * 256 + b) * 256 + a)
-                        pos = pos + 8
-                        a, b, c, d = string.byte(str, pos - 3, pos)
-                        lanes_hi[j] = bxor(lanes_hi[j], ((d * 256 + c) * 256 + b) * 256 + a)
-                    end
-
-                    local L01_lo, L01_hi, L02_lo, L02_hi, L03_lo, L03_hi, L04_lo, L04_hi, L05_lo, L05_hi, L06_lo, L06_hi, L07_lo, L07_hi, L08_lo, L08_hi, L09_lo, L09_hi, L10_lo, L10_hi, L11_lo, L11_hi, L12_lo, L12_hi, L13_lo, L13_hi, L14_lo, L14_hi, L15_lo, L15_hi, L16_lo, L16_hi, L17_lo, L17_hi, L18_lo, L18_hi, L19_lo, L19_hi, L20_lo, L20_hi, L21_lo, L21_hi, L22_lo, L22_hi, L23_lo, L23_hi, L24_lo, L24_hi, L25_lo, L25_hi = lanes_lo[1], lanes_hi[1], lanes_lo[2], lanes_hi[2], lanes_lo[3], lanes_hi[3], lanes_lo[4], lanes_hi[4], lanes_lo[5], lanes_hi[5], lanes_lo[6], lanes_hi[6], lanes_lo[7], lanes_hi[7], lanes_lo[8], lanes_hi[8], lanes_lo[9], lanes_hi[9], lanes_lo[10], lanes_hi[10], lanes_lo[11], lanes_hi[11], lanes_lo[12], lanes_hi[12], lanes_lo[13], lanes_hi[13], lanes_lo[14], lanes_hi[14], lanes_lo[15], lanes_hi[15], lanes_lo[16], lanes_hi[16], lanes_lo[17], lanes_hi[17], lanes_lo[18], lanes_hi[18], lanes_lo[19], lanes_hi[19], lanes_lo[20], lanes_hi[20], lanes_lo[21], lanes_hi[21], lanes_lo[22], lanes_hi[22], lanes_lo[23], lanes_hi[23], lanes_lo[24], lanes_hi[24], lanes_lo[25], lanes_hi[25]
-
-                    for round_idx = 1, 24 do
-                        local C1_lo = bxor(L01_lo, L06_lo, L11_lo, L16_lo, L21_lo)
-                        local C1_hi = bxor(L01_hi, L06_hi, L11_hi, L16_hi, L21_hi)
-                        local C2_lo = bxor(L02_lo, L07_lo, L12_lo, L17_lo, L22_lo)
-                        local C2_hi = bxor(L02_hi, L07_hi, L12_hi, L17_hi, L22_hi)
-                        local C3_lo = bxor(L03_lo, L08_lo, L13_lo, L18_lo, L23_lo)
-                        local C3_hi = bxor(L03_hi, L08_hi, L13_hi, L18_hi, L23_hi)
-                        local C4_lo = bxor(L04_lo, L09_lo, L14_lo, L19_lo, L24_lo)
-                        local C4_hi = bxor(L04_hi, L09_hi, L14_hi, L19_hi, L24_hi)
-                        local C5_lo = bxor(L05_lo, L10_lo, L15_lo, L20_lo, L25_lo)
-                        local C5_hi = bxor(L05_hi, L10_hi, L15_hi, L20_hi, L25_hi)
-
-                        local D_lo = bxor(C1_lo, C3_lo * 2 + (C3_hi % 2^32 - C3_hi % 2^31) / 2^31)
-                        local D_hi = bxor(C1_hi, C3_hi * 2 + (C3_lo % 2^32 - C3_lo % 2^31) / 2^31)
-
-                        local T0_lo = bxor(D_lo, L02_lo)
-                        local T0_hi = bxor(D_hi, L02_hi)
-                        local T1_lo = bxor(D_lo, L07_lo)
-                        local T1_hi = bxor(D_hi, L07_hi)
-                        local T2_lo = bxor(D_lo, L12_lo)
-                        local T2_hi = bxor(D_hi, L12_hi)
-                        local T3_lo = bxor(D_lo, L17_lo)
-                        local T3_hi = bxor(D_hi, L17_hi)
-                        local T4_lo = bxor(D_lo, L22_lo)
-                        local T4_hi = bxor(D_hi, L22_hi)
-
-                        L02_lo = (T1_lo % 2^32 - T1_lo % 2^20) / 2^20 + T1_hi * 2^12
-                        L02_hi = (T1_hi % 2^32 - T1_hi % 2^20) / 2^20 + T1_lo * 2^12
-                        L07_lo = (T3_lo % 2^32 - T3_lo % 2^19) / 2^19 + T3_hi * 2^13
-                        L07_hi = (T3_hi % 2^32 - T3_hi % 2^19) / 2^19 + T3_lo * 2^13
-                        L12_lo = T0_lo * 2 + (T0_hi % 2^32 - T0_hi % 2^31) / 2^31
-                        L12_hi = T0_hi * 2 + (T0_lo % 2^32 - T0_lo % 2^31) / 2^31
-                        L17_lo = T2_lo * 2^10 + (T2_hi % 2^32 - T2_hi % 2^22) / 2^22
-                        L17_hi = T2_hi * 2^10 + (T2_lo % 2^32 - T2_lo % 2^22) / 2^22
-                        L22_lo = T4_lo * 2^2 + (T4_hi % 2^32 - T4_hi % 2^30) / 2^30
-                        L22_hi = T4_hi * 2^2 + (T4_lo % 2^32 - T4_lo % 2^30) / 2^30
-
-                        D_lo = bxor(C2_lo, C4_lo * 2 + (C4_hi % 2^32 - C4_hi % 2^31) / 2^31)
-                        D_hi = bxor(C2_hi, C4_hi * 2 + (C4_lo % 2^32 - C4_lo % 2^31) / 2^31)
-
-                        T0_lo = bxor(D_lo, L03_lo)
-                        T0_hi = bxor(D_hi, L03_hi)
-                        T1_lo = bxor(D_lo, L08_lo)
-                        T1_hi = bxor(D_hi, L08_hi)
-                        T2_lo = bxor(D_lo, L13_lo)
-                        T2_hi = bxor(D_hi, L13_hi)
-                        T3_lo = bxor(D_lo, L18_lo)
-                        T3_hi = bxor(D_hi, L18_hi)
-                        T4_lo = bxor(D_lo, L23_lo)
-                        T4_hi = bxor(D_hi, L23_hi)
-
-                        L03_lo = (T2_lo % 2^32 - T2_lo % 2^21) / 2^21 + T2_hi * 2^11
-                        L03_hi = (T2_hi % 2^32 - T2_hi % 2^21) / 2^21 + T2_lo * 2^11
-                        L08_lo = (T4_lo % 2^32 - T4_lo % 2^3) / 2^3 + T4_hi * 2^29 % 2^32
-                        L08_hi = (T4_hi % 2^32 - T4_hi % 2^3) / 2^3 + T4_lo * 2^29 % 2^32
-                        L13_lo = T1_lo * 2^6 + (T1_hi % 2^32 - T1_hi % 2^26) / 2^26
-                        L13_hi = T1_hi * 2^6 + (T1_lo % 2^32 - T1_lo % 2^26) / 2^26
-                        L18_lo = T3_lo * 2^15 + (T3_hi % 2^32 - T3_hi % 2^17) / 2^17
-                        L18_hi = T3_hi * 2^15 + (T3_lo % 2^32 - T3_lo % 2^17) / 2^17
-                        L23_lo = (T0_lo % 2^32 - T0_lo % 2^2) / 2^2 + T0_hi * 2^30 % 2^32
-                        L23_hi = (T0_hi % 2^32 - T0_hi % 2^2) / 2^2 + T0_lo * 2^30 % 2^32
-
-                        D_lo = bxor(C3_lo, C5_lo * 2 + (C5_hi % 2^32 - C5_hi % 2^31) / 2^31)
-                        D_hi = bxor(C3_hi, C5_hi * 2 + (C5_lo % 2^32 - C5_lo % 2^31) / 2^31)
-
-                        T0_lo = bxor(D_lo, L04_lo)
-                        T0_hi = bxor(D_hi, L04_hi)
-                        T1_lo = bxor(D_lo, L09_lo)
-                        T1_hi = bxor(D_hi, L09_hi)
-                        T2_lo = bxor(D_lo, L14_lo)
-                        T2_hi = bxor(D_hi, L14_hi)
-                        T3_lo = bxor(D_lo, L19_lo)
-                        T3_hi = bxor(D_hi, L19_hi)
-                        T4_lo = bxor(D_lo, L24_lo)
-                        T4_hi = bxor(D_hi, L24_hi)
-
-                        L04_lo = T3_lo * 2^21 % 2^32 + (T3_hi % 2^32 - T3_hi % 2^11) / 2^11
-                        L04_hi = T3_hi * 2^21 % 2^32 + (T3_lo % 2^32 - T3_lo % 2^11) / 2^11
-                        L09_lo = T0_lo * 2^28 % 2^32 + (T0_hi % 2^32 - T0_hi % 2^4) / 2^4
-                        L09_hi = T0_hi * 2^28 % 2^32 + (T0_lo % 2^32 - T0_lo % 2^4) / 2^4
-                        L14_lo = T2_lo * 2^25 % 2^32 + (T2_hi % 2^32 - T2_hi % 2^7) / 2^7
-                        L14_hi = T2_hi * 2^25 % 2^32 + (T2_lo % 2^32 - T2_lo % 2^7) / 2^7
-                        L19_lo = (T4_lo % 2^32 - T4_lo % 2^8) / 2^8 + T4_hi * 2^24 % 2^32
-                        L19_hi = (T4_hi % 2^32 - T4_hi % 2^8) / 2^8 + T4_lo * 2^24 % 2^32
-                        L24_lo = (T1_lo % 2^32 - T1_lo % 2^9) / 2^9 + T1_hi * 2^23 % 2^32
-                        L24_hi = (T1_hi % 2^32 - T1_hi % 2^9) / 2^9 + T1_lo * 2^23 % 2^32
-
-                        D_lo = bxor(C4_lo, C1_lo * 2 + (C1_hi % 2^32 - C1_hi % 2^31) / 2^31)
-                        D_hi = bxor(C4_hi, C1_hi * 2 + (C1_lo % 2^32 - C1_lo % 2^31) / 2^31)
-
-                        T0_lo = bxor(D_lo, L05_lo)
-                        T0_hi = bxor(D_hi, L05_hi)
-                        T1_lo = bxor(D_lo, L10_lo)
-                        T1_hi = bxor(D_hi, L10_hi)
-                        T2_lo = bxor(D_lo, L15_lo)
-                        T2_hi = bxor(D_hi, L15_hi)
-                        T3_lo = bxor(D_lo, L20_lo)
-                        T3_hi = bxor(D_hi, L20_hi)
-                        T4_lo = bxor(D_lo, L25_lo)
-                        T4_hi = bxor(D_hi, L25_hi)
-
-                        L05_lo = T4_lo * 2^14 + (T4_hi % 2^32 - T4_hi % 2^18) / 2^18
-                        L05_hi = T4_hi * 2^14 + (T4_lo % 2^32 - T4_lo % 2^18) / 2^18
-                        L10_lo = T1_lo * 2^20 % 2^32 + (T1_hi % 2^32 - T1_hi % 2^12) / 2^12
-                        L10_hi = T1_hi * 2^20 % 2^32 + (T1_lo % 2^32 - T1_lo % 2^12) / 2^12
-                        L15_lo = T3_lo * 2^8 + (T3_hi % 2^32 - T3_hi % 2^24) / 2^24
-                        L15_hi = T3_hi * 2^8 + (T3_lo % 2^32 - T3_lo % 2^24) / 2^24
-                        L20_lo = T0_lo * 2^27 % 2^32 + (T0_hi % 2^32 - T0_hi % 2^5) / 2^5
-                        L20_hi = T0_hi * 2^27 % 2^32 + (T0_lo % 2^32 - T0_lo % 2^5) / 2^5
-                        L25_lo = (T2_lo % 2^32 - T2_lo % 2^25) / 2^25 + T2_hi * 2^7
-                        L25_hi = (T2_hi % 2^32 - T2_hi % 2^25) / 2^25 + T2_lo * 2^7
-
-                        D_lo = bxor(C5_lo, C2_lo * 2 + (C2_hi % 2^32 - C2_hi % 2^31) / 2^31)
-                        D_hi = bxor(C5_hi, C2_hi * 2 + (C2_lo % 2^32 - C2_lo % 2^31) / 2^31)
-
-                        T1_lo = bxor(D_lo, L06_lo)
-                        T1_hi = bxor(D_hi, L06_hi)
-                        T2_lo = bxor(D_lo, L11_lo)
-                        T2_hi = bxor(D_hi, L11_hi)
-                        T3_lo = bxor(D_lo, L16_lo)
-                        T3_hi = bxor(D_hi, L16_hi)
-                        T4_lo = bxor(D_lo, L21_lo)
-                        T4_hi = bxor(D_hi, L21_hi)
-
-                        L06_lo = T2_lo * 2^3 + (T2_hi % 2^32 - T2_hi % 2^29) / 2^29
-                        L06_hi = T2_hi * 2^3 + (T2_lo % 2^32 - T2_lo % 2^29) / 2^29
-                        L11_lo = T4_lo * 2^18 + (T4_hi % 2^32 - T4_hi % 2^14) / 2^14
-                        L11_hi = T4_hi * 2^18 + (T4_lo % 2^32 - T4_lo % 2^14) / 2^14
-                        L16_lo = (T1_lo % 2^32 - T1_lo % 2^28) / 2^28 + T1_hi * 2^4
-                        L16_hi = (T1_hi % 2^32 - T1_hi % 2^28) / 2^28 + T1_lo * 2^4
-                        L21_lo = (T3_lo % 2^32 - T3_lo % 2^23) / 2^23 + T3_hi * 2^9
-                        L21_hi = (T3_hi % 2^32 - T3_hi % 2^23) / 2^23 + T3_lo * 2^9
-
-                        L01_lo = bxor(D_lo, L01_lo)
-                        L01_hi = bxor(D_hi, L01_hi)
-                        L01_lo, L02_lo, L03_lo, L04_lo, L05_lo = bxor(L01_lo, band(-1 - L02_lo, L03_lo)), bxor(L02_lo, band(-1 - L03_lo, L04_lo)), bxor(L03_lo, band(-1 - L04_lo, L05_lo)), bxor(L04_lo, band(-1 - L05_lo, L01_lo)), bxor(L05_lo, band(-1 - L01_lo, L02_lo))
-                        L01_hi, L02_hi, L03_hi, L04_hi, L05_hi = bxor(L01_hi, band(-1 - L02_hi, L03_hi)), bxor(L02_hi, band(-1 - L03_hi, L04_hi)), bxor(L03_hi, band(-1 - L04_hi, L05_hi)), bxor(L04_hi, band(-1 - L05_hi, L01_hi)), bxor(L05_hi, band(-1 - L01_hi, L02_hi))
-                        L06_lo, L07_lo, L08_lo, L09_lo, L10_lo = bxor(L09_lo, band(-1 - L10_lo, L06_lo)), bxor(L10_lo, band(-1 - L06_lo, L07_lo)), bxor(L06_lo, band(-1 - L07_lo, L08_lo)), bxor(L07_lo, band(-1 - L08_lo, L09_lo)), bxor(L08_lo, band(-1 - L09_lo, L10_lo))
-                        L06_hi, L07_hi, L08_hi, L09_hi, L10_hi = bxor(L09_hi, band(-1 - L10_hi, L06_hi)), bxor(L10_hi, band(-1 - L06_hi, L07_hi)), bxor(L06_hi, band(-1 - L07_hi, L08_hi)), bxor(L07_hi, band(-1 - L08_hi, L09_hi)), bxor(L08_hi, band(-1 - L09_hi, L10_hi))
-                        L11_lo, L12_lo, L13_lo, L14_lo, L15_lo = bxor(L12_lo, band(-1 - L13_lo, L14_lo)), bxor(L13_lo, band(-1 - L14_lo, L15_lo)), bxor(L14_lo, band(-1 - L15_lo, L11_lo)), bxor(L15_lo, band(-1 - L11_lo, L12_lo)), bxor(L11_lo, band(-1 - L12_lo, L13_lo))
-                        L11_hi, L12_hi, L13_hi, L14_hi, L15_hi = bxor(L12_hi, band(-1 - L13_hi, L14_hi)), bxor(L13_hi, band(-1 - L14_hi, L15_hi)), bxor(L14_hi, band(-1 - L15_hi, L11_hi)), bxor(L15_hi, band(-1 - L11_hi, L12_hi)), bxor(L11_hi, band(-1 - L12_hi, L13_hi))
-                        L16_lo, L17_lo, L18_lo, L19_lo, L20_lo = bxor(L20_lo, band(-1 - L16_lo, L17_lo)), bxor(L16_lo, band(-1 - L17_lo, L18_lo)), bxor(L17_lo, band(-1 - L18_lo, L19_lo)), bxor(L18_lo, band(-1 - L19_lo, L20_lo)), bxor(L19_lo, band(-1 - L20_lo, L16_lo))
-                        L16_hi, L17_hi, L18_hi, L19_hi, L20_hi = bxor(L20_hi, band(-1 - L16_hi, L17_hi)), bxor(L16_hi, band(-1 - L17_hi, L18_hi)), bxor(L17_hi, band(-1 - L18_hi, L19_hi)), bxor(L18_hi, band(-1 - L19_hi, L20_hi)), bxor(L19_hi, band(-1 - L20_hi, L16_hi))
-                        L21_lo, L22_lo, L23_lo, L24_lo, L25_lo = bxor(L23_lo, band(-1 - L24_lo, L25_lo)), bxor(L24_lo, band(-1 - L25_lo, L21_lo)), bxor(L25_lo, band(-1 - L21_lo, L22_lo)), bxor(L21_lo, band(-1 - L22_lo, L23_lo)), bxor(L22_lo, band(-1 - L23_lo, L24_lo))
-                        L21_hi, L22_hi, L23_hi, L24_hi, L25_hi = bxor(L23_hi, band(-1 - L24_hi, L25_hi)), bxor(L24_hi, band(-1 - L25_hi, L21_hi)), bxor(L25_hi, band(-1 - L21_hi, L22_hi)), bxor(L21_hi, band(-1 - L22_hi, L23_hi)), bxor(L22_hi, band(-1 - L23_hi, L24_hi))
-                        L01_lo = bxor(L01_lo, RC_lo[round_idx])
-                        L01_hi = L01_hi + (RC_hi[round_idx]) -- RC_hi[] is either 0 or 0x80000000, so we could use fast addition instead of slow bxor
-                    end
-
-                    lanes_lo[1] = L01_lo
-                    lanes_hi[1] = L01_hi
-                    lanes_lo[2] = L02_lo
-                    lanes_hi[2] = L02_hi
-                    lanes_lo[3] = L03_lo
-                    lanes_hi[3] = L03_hi
-                    lanes_lo[4] = L04_lo
-                    lanes_hi[4] = L04_hi
-                    lanes_lo[5] = L05_lo
-                    lanes_hi[5] = L05_hi
-                    lanes_lo[6] = L06_lo
-                    lanes_hi[6] = L06_hi
-                    lanes_lo[7] = L07_lo
-                    lanes_hi[7] = L07_hi
-                    lanes_lo[8] = L08_lo
-                    lanes_hi[8] = L08_hi
-                    lanes_lo[9] = L09_lo
-                    lanes_hi[9] = L09_hi
-                    lanes_lo[10] = L10_lo
-                    lanes_hi[10] = L10_hi
-                    lanes_lo[11] = L11_lo
-                    lanes_hi[11] = L11_hi
-                    lanes_lo[12] = L12_lo
-                    lanes_hi[12] = L12_hi
-                    lanes_lo[13] = L13_lo
-                    lanes_hi[13] = L13_hi
-                    lanes_lo[14] = L14_lo
-                    lanes_hi[14] = L14_hi
-                    lanes_lo[15] = L15_lo
-                    lanes_hi[15] = L15_hi
-                    lanes_lo[16] = L16_lo
-                    lanes_hi[16] = L16_hi
-                    lanes_lo[17] = L17_lo
-                    lanes_hi[17] = L17_hi
-                    lanes_lo[18] = L18_lo
-                    lanes_hi[18] = L18_hi
-                    lanes_lo[19] = L19_lo
-                    lanes_hi[19] = L19_hi
-                    lanes_lo[20] = L20_lo
-                    lanes_hi[20] = L20_hi
-                    lanes_lo[21] = L21_lo
-                    lanes_hi[21] = L21_hi
-                    lanes_lo[22] = L22_lo
-                    lanes_hi[22] = L22_hi
-                    lanes_lo[23] = L23_lo
-                    lanes_hi[23] = L23_hi
-                    lanes_lo[24] = L24_lo
-                    lanes_hi[24] = L24_hi
-                    lanes_lo[25] = L25_lo
-                    lanes_hi[25] = L25_hi
-                end
-            end
-
-
-
-            -- "block_size_in_bytes" is multiple of 8
-            if type(digest_size) ~= "number" then
-                -- arguments in SHAKE are swapped:
-                --    NIST FIPS 202 defines SHAKE(message,num_bits)
-                --    this module   defines SHAKE(num_bytes,message)
-                -- it's easy to forget about this swap, hence the check
-                error("Argument 'digest_size' must be a number", 2)
-            end
-
-            -- Create an instance (private objects for current calculation)
-            local tail, lanes_lo, lanes_hi = "", table.create(25, 0), hi_factor_keccak == 0 and table.create(25, 0)
-            local result
-
-            --~     pad the input N using the pad function, yielding a padded bit string P with a length divisible by r (such that n = len(P)/r is integer),
-            --~     break P into n consecutive r-bit pieces P0, ..., Pn-1 (last is zero-padded)
-            --~     initialize the state S to a string of b 0 bits.
-            --~     absorb the input into the state: For each block Pi,
-            --~         extend Pi at the end by a string of c 0 bits, yielding one of length b,
-            --~         bxor that with S and
-            --~         apply the block permutation f to the result, yielding a new state S
-            --~     initialize Z to be the empty string
-            --~     while the length of Z is less than d:
-            --~         append the first r bits of S to Z
-            --~         if Z is still less than d bits long, apply f to S, yielding a new state S.
-            --~     truncate Z to d bits
-            local function partial(message_part)
-                if message_part then
-                    local partLength = #message_part
-                    if tail then
-                        local offs = 0
-                        if tail ~= "" and #tail + partLength >= block_size_in_bytes then
-                            offs = block_size_in_bytes - #tail
-                            keccak_feed(lanes_lo, lanes_hi, tail .. string.sub(message_part, 1, offs), 0, block_size_in_bytes, block_size_in_bytes)
-                            tail = ""
-                        end
-                        local size = partLength - offs
-                        local size_tail = size % block_size_in_bytes
-                        keccak_feed(lanes_lo, lanes_hi, message_part, offs, size - size_tail, block_size_in_bytes)
-                        tail = tail .. string.sub(message_part, partLength + 1 - size_tail)
-                        return partial
-                    else
-                        error("Adding more chunks is not allowed after receiving the result", 2)
-                    end
-                else
-                    if tail then
-                        -- append the following bits to the message: for usual SHA3: 011(0*)1, for SHAKE: 11111(0*)1
-                        local gap_start = is_SHAKE and 31 or 6
-                        tail = tail .. (#tail + 1 == block_size_in_bytes and string.char(gap_start + 128) or string.char(gap_start) .. rep("\0", (-2 - #tail) % block_size_in_bytes) .. "\128")
-                        keccak_feed(lanes_lo, lanes_hi, tail, 0, #tail, block_size_in_bytes)
-                        tail = nil
-
-                        local lanes_used = 0
-                        local total_lanes = floor(block_size_in_bytes / 8)
-                        local qwords = {}
-
-                        local function get_next_qwords_of_digest(qwords_qty)
-                            -- returns not more than 'qwords_qty' qwords ('qwords_qty' might be non-integer)
-                            -- doesn't go across keccak-buffer boundary
-                            -- block_size_in_bytes is a multiple of 8, so, keccak-buffer contains integer number of qwords
-                            if lanes_used >= total_lanes then
-                                keccak_feed(lanes_lo, lanes_hi, "\0\0\0\0\0\0\0\0", 0, 8, 8)
-                                lanes_used = 0
-                            end
-
-                            qwords_qty = floor(math.min(qwords_qty, total_lanes - lanes_used))
-                            if hi_factor_keccak ~= 0 then
-                                for j = 1, qwords_qty do
-                                    qwords[j] = HEX64(lanes_lo[lanes_used + j - 1 + lanes_index_base])
-                                end
-                            else
-                                for j = 1, qwords_qty do
-                                    qwords[j] = format("%08x", lanes_hi[lanes_used + j] % 4294967296) .. format("%08x", lanes_lo[lanes_used + j] % 4294967296)
-                                end
-                            end
-
-                            lanes_used = lanes_used + qwords_qty
-                            return string.gsub(table.concat(qwords, "", 1, qwords_qty), "(..)(..)(..)(..)(..)(..)(..)(..)", "%8%7%6%5%4%3%2%1"), qwords_qty * 8
-                        end
-
-                        local parts = {} -- digest parts
-                        local last_part, last_part_size = "", 0
-
-                        local function get_next_part_of_digest(bytes_needed)
-                            -- returns 'bytes_needed' bytes, for arbitrary integer 'bytes_needed'
-                            bytes_needed = bytes_needed or 1
-                            if bytes_needed <= last_part_size then
-                                last_part_size = last_part_size - bytes_needed
-                                local part_size_in_nibbles = bytes_needed * 2
-                                local result = string.sub(last_part, 1, part_size_in_nibbles)
-                                last_part = string.sub(last_part, part_size_in_nibbles + 1)
-                                return result
-                            end
-
-                            local parts_qty = 0
-                            if last_part_size > 0 then
-                                parts_qty = 1
-                                parts[parts_qty] = last_part
-                                bytes_needed = bytes_needed - last_part_size
-                            end
-
-                            -- repeats until the length is enough
-                            while bytes_needed >= 8 do
-                                local next_part, next_part_size = get_next_qwords_of_digest(bytes_needed / 8)
-                                parts_qty = parts_qty + 1
-                                parts[parts_qty] = next_part
-                                bytes_needed = bytes_needed - next_part_size
-                            end
-
-                            if bytes_needed > 0 then
-                                last_part, last_part_size = get_next_qwords_of_digest(1)
-                                parts_qty = parts_qty + 1
-                                parts[parts_qty] = get_next_part_of_digest(bytes_needed)
-                            else
-                                last_part, last_part_size = "", 0
-                            end
-
-                            return table.concat(parts, "", 1, parts_qty)
-                        end
-
-                        if digest_size < 0 then
-                            result = get_next_part_of_digest
-                        else
-                            result = get_next_part_of_digest(digest_size)
-                        end
-
-                    end
-
-                    return result
-                end
-            end
-
-            if message then
-                -- Actually perform calculations and return the SHA3 digest of a message
-                return partial(message)()
-            else
-                -- Return function for chunk-by-chunk loading
-                -- User should feed every chunk of input data as single argument to this function and finally get SHA3 digest by invoking this function without an argument
-                return partial
-            end
-        end
-    end)()
+    pi = (function(digits, includeDecimal)
+        return string.sub("1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679821480865132823066470938446095505822317253594081284811174502841027019385211055596446229489549303819644288109756659334461284756482337867831652712019091456485669234603486104543266482133936072602491412737245870066063155881748815209209628292540917153643678925903600113305305488204665213841469519415116094330572703657595919530921861173819326117931051185480744623799627495673518857527248912279381830119491298336733624406566430860213949463952247371907021798609437027705392171762931767523846748184676694051320005681271452635608277857713427577896091736371787214684409012249534301465495853710507922796892589235420199561121290219608640344181598136297747713099605187072113499999983729780499510597317328160963185950244594553469083026425223082533446850352619311881710100031378387528865875332083814206171776691473035982534904287554687311595628638823537875937519577818577805321712268066130019278766111959092164201989", 1, digits)
+    end)
 }
-
 
 
 
@@ -871,226 +168,461 @@ function RoCrypt.utils.queue()
     return Queue();
 
 end
-
 function RoCrypt.utils.array()
-local Array = {};
+    local Array = {};
 
-Array.size = function(array)
-    return #array;
-end
-
-Array.fromString = function(string)
-    local bytes = {};
-
-    local i = 1;
-    local byte = string.byte(string, i);
-    while byte ~= nil do
-        bytes[i] = byte;
-        i = i + 1;
-        byte = string.byte(string, i);
+    Array.size = function(array)
+        return #array;
     end
 
-    return bytes;
+    Array.fromString = function(string)
+        local bytes = {};
 
-end
+        local i = 1;
+        local byte = string.byte(string, i);
+        while byte ~= nil do
+            bytes[i] = byte;
+            i = i + 1;
+            byte = string.byte(string, i);
+        end
 
-Array.toString = function(bytes)
-    local chars = {};
-    local i = 1;
+        return bytes;
 
-    local byte = bytes[i];
-    while byte ~= nil do
-        chars[i] = string.char(byte);
-        i = i + 1;
-        byte = bytes[i];
     end
 
-    return table.concat(chars, "");
-end
+    Array.toString = function(bytes)
+        local chars = {};
+        local i = 1;
 
-Array.fromStream = function(stream)
-    local array = {};
-    local i = 1;
+        local byte = bytes[i];
+        while byte ~= nil do
+            chars[i] = string.char(byte);
+            i = i + 1;
+            byte = bytes[i];
+        end
 
-    local byte = stream();
-    while byte ~= nil do
-        array[i] = byte;
-        i = i + 1;
-        byte = stream();
+        return table.concat(chars, "");
     end
 
-    return array;
-end
+    Array.fromStream = function(stream)
+        local array = {};
+        local i = 1;
 
-Array.readFromQueue = function(queue, size)
-    local array = {};
+        local byte = stream();
+        while byte ~= nil do
+            array[i] = byte;
+            i = i + 1;
+            byte = stream();
+        end
 
-    for i = 1, size do
-        array[i] = queue.pop();
+        return array;
     end
 
-    return array;
-end
+    Array.readFromQueue = function(queue, size)
+        local array = {};
 
-Array.writeToQueue = function(queue, array)
-    local size = Array.size(array);
+        for i = 1, size do
+            array[i] = queue.pop();
+        end
 
-    for i = 1, size do
-        queue.push(array[i]);
-    end
-end
-
-Array.toStream = function(array)
-    local queue = RoCrypt.utils.queue();
-    local i = 1;
-
-    local byte = array[i];
-    while byte ~= nil do
-        queue.push(byte);
-        i = i + 1;
-        byte = array[i];
+        return array;
     end
 
-    return queue.pop;
-end
+    Array.writeToQueue = function(queue, array)
+        local size = Array.size(array);
 
-
-local fromHexTable = {};
-for i = 0, 255 do
-    fromHexTable[string.format("%02X", i)] = i;
-    fromHexTable[string.format("%02x", i)] = i;
-end
-
-Array.fromHex = function(hex)
-    local array = {};
-
-    for i = 1, string.len(hex) / 2 do
-        local h = string.sub(hex, i * 2 - 1, i * 2);
-        array[i] = fromHexTable[h];
+        for i = 1, size do
+            queue.push(array[i]);
+        end
     end
 
-    return array;
-end
+    Array.toStream = function(array)
+        local queue = RoCrypt.utils.queue();
+        local i = 1;
 
+        local byte = array[i];
+        while byte ~= nil do
+            queue.push(byte);
+            i = i + 1;
+            byte = array[i];
+        end
 
-local toHexTable = {};
-for i = 0, 255 do
-    toHexTable[i] = string.format("%02X", i);
-end
-
-Array.toHex = function(array)
-    local hex = {};
-    local i = 1;
-
-    local byte = array[i];
-    while byte ~= nil do
-        hex[i] = toHexTable[byte];
-        i = i + 1;
-        byte = array[i];
+        return queue.pop;
     end
 
-    return table.concat(hex, "");
 
-end
-
-Array.concat = function(a, b)
-    local concat = {};
-    local out = 1;
-
-    local i = 1;
-    local byte = a[i];
-    while byte ~= nil do
-        concat[out] = byte;
-        i = i + 1;
-        out = out + 1;
-        byte = a[i];
+    local fromHexTable = {};
+    for i = 0, 255 do
+        fromHexTable[string.format("%02X", i)] = i;
+        fromHexTable[string.format("%02x", i)] = i;
     end
 
-    i = 1;
-    byte = b[i];
-    while byte ~= nil do
-        concat[out] = byte;
-        i = i + 1;
-        out = out + 1;
+    Array.fromHex = function(hex)
+        local array = {};
+
+        for i = 1, string.len(hex) / 2 do
+            local h = string.sub(hex, i * 2 - 1, i * 2);
+            array[i] = fromHexTable[h];
+        end
+
+        return array;
+    end
+
+
+    local toHexTable = {};
+    for i = 0, 255 do
+        toHexTable[i] = string.format("%02X", i);
+    end
+
+    Array.toHex = function(array)
+        local hex = {};
+        local i = 1;
+
+        local byte = array[i];
+        while byte ~= nil do
+            hex[i] = toHexTable[byte];
+            i = i + 1;
+            byte = array[i];
+        end
+
+        return table.concat(hex, "");
+
+    end
+
+    Array.concat = function(a, b)
+        local concat = {};
+        local out = 1;
+
+        local i = 1;
+        local byte = a[i];
+        while byte ~= nil do
+            concat[out] = byte;
+            i = i + 1;
+            out = out + 1;
+            byte = a[i];
+        end
+
+        i = 1;
         byte = b[i];
+        while byte ~= nil do
+            concat[out] = byte;
+            i = i + 1;
+            out = out + 1;
+            byte = b[i];
+        end
+
+        return concat;
     end
 
-    return concat;
+    Array.truncate = function(a, newSize)
+        local x = {};
+
+        for i = 1, newSize do
+            x[i] = a[i];
+        end
+
+        return x;
+    end
+
+    Array.bxor = function(a, b)
+        local x = {};
+
+        for k, v in pairs(a) do
+            x[k] = bxor(v, b[k]);
+        end
+
+        return x;
+    end
+
+    Array.substitute = function(input, sbox)
+        local out = {};
+
+        for k, v in pairs(input) do
+            out[k] = sbox[v];
+        end
+
+        return out;
+    end
+
+    Array.permute = function(input, pbox)
+        local out = {};
+
+        for k, v in pairs(pbox) do
+            out[k] = input[v];
+        end
+
+        return out;
+    end
+
+    Array.copy = function(input)
+        local out = {};
+
+        for k, v in pairs(input) do
+            out[k] = v;
+        end
+        return out;
+    end
+
+    Array.slice = function(input, start, stop)
+        local out = {};
+
+        if start == nil then
+            start = 1
+        elseif start < 0 then
+            start = #input + start + 1
+        end
+        if stop == nil then
+            stop = #input
+        elseif stop < 0 then
+            stop = #input + stop + 1
+        end
+
+        for i = start, stop do
+            table.insert(out, input[i])
+        end
+
+        return out;
+    end
+
+    return Array;
 end
 
-Array.truncate = function(a, newSize)
-    local x = {};
+function RoCrypt.utils.queue_buffer()
+    local Queue = function()
+        local queue = buffer.create(4096)
+        local tail = 0
+        local head = 0
 
-    for i = 1, newSize do
-        x[i] = a[i];
+        local public = {}
+
+        public.push = function(obj)
+            buffer.writeu8(queue, head, obj)
+            head = head + 1
+            if head >= buffer.len(queue) then
+                local newQueue = buffer.create(buffer.len(queue) * 2)
+                buffer.copy(newQueue, 0, queue, 0, buffer.len(queue))
+                queue = newQueue
+            end
+        end
+
+        public.pop = function()
+            if tail < head then
+                local obj = buffer.readu8(queue, tail)
+                tail = tail + 1
+                return obj
+            else
+                return nil
+            end
+        end
+
+        public.size = function()
+            return head - tail
+        end
+
+        public.getHead = function()
+            return head
+        end
+
+        public.getTail = function()
+            return tail
+        end
+
+        public.reset = function()
+            queue = buffer.create(4096)
+            head = 0
+            tail = 0
+        end
+
+        return public
     end
 
-    return x;
+    return Queue()
 end
 
-Array.bxor = function(a, b)
-    local x = {};
+function RoCrypt.utils.array_buffer()
+    local Array = {}
 
-    for k, v in pairs(a) do
-        x[k] = bxor(v, b[k]);
+    Array.size = function(array)
+        return buffer.len(array)
     end
 
-    return x;
+    Array.fromString = function(string)
+        return buffer.fromstring(string)
+    end
+
+    Array.toString = function(bytes)
+        return buffer.tostring(bytes)
+    end
+
+    Array.fromStream = function(stream)
+        local array = buffer.create(4096)
+        local i = 0
+
+        local byte = stream()
+        while byte ~= nil do
+            buffer.writeu8(array, i, byte)
+            i = i + 1
+            if i >= buffer.len(array) then
+                local newArray = buffer.create(buffer.len(array) * 2)
+                buffer.copy(newArray, 0, array, 0, buffer.len(array))
+                array = newArray
+            end
+            byte = stream()
+        end
+
+        local result = buffer.create(i)
+        buffer.copy(result, 0, array, 0, i)
+        return result
+    end
+
+    Array.readFromQueue = function(queue, size)
+        local array = buffer.create(size)
+
+        for i = 0, size - 1 do
+            buffer.writeu8(array, i, queue.pop())
+        end
+
+        return array
+    end
+
+    Array.writeToQueue = function(queue, array)
+        local size = buffer.len(array)
+
+        for i = 0, size - 1 do
+            queue.push(buffer.readu8(array, i))
+        end
+    end
+
+    Array.toStream = function(array)
+        local queue = RoCrypt.utils.queue()
+        local i = 0
+
+        return function()
+            if i < buffer.len(array) then
+                local byte = buffer.readu8(array, i)
+                i = i + 1
+                return byte
+            else
+                return nil
+            end
+        end
+    end
+
+    local fromHexTable = buffer.create(256)
+    for i = 0, 255 do
+        local hex = string.format("%02X", i)
+        buffer.writeu8(fromHexTable, string.byte(hex, 1), i)
+        buffer.writeu8(fromHexTable, string.byte(hex, 2), i)
+    end
+
+    Array.fromHex = function(hex)
+        local array = buffer.create(string.len(hex) / 2)
+
+        for i = 0, buffer.len(array) - 1 do
+            local h1 = string.byte(hex, i * 2 + 1)
+            local h2 = string.byte(hex, i * 2 + 2)
+            buffer.writeu8(array, i, bor(lshift(buffer.readu8(fromHexTable, h1), 4), buffer.readu8(fromHexTable, h2)))
+        end
+
+        return array
+    end
+
+    local toHexTable = buffer.create(256)
+    for i = 0, 255 do
+        local hex = string.format("%02X", i)
+        buffer.writestring(toHexTable, i * 2, hex)
+    end
+
+    Array.toHex = function(array)
+        local hex = buffer.create(buffer.len(array) * 2)
+
+        for i = 0, buffer.len(array) - 1 do
+            local byte = buffer.readu8(array, i)
+            buffer.writestring(hex, i * 2, buffer.readstring(toHexTable, byte * 2, 2))
+        end
+
+        return buffer.tostring(hex)
+    end
+
+    Array.concat = function(a, b)
+        local result = buffer.create(buffer.len(a) + buffer.len(b))
+        buffer.copy(result, 0, a, 0, buffer.len(a))
+        buffer.copy(result, buffer.len(a), b, 0, buffer.len(b))
+        return result
+    end
+
+    Array.truncate = function(a, newSize)
+        local result = buffer.create(newSize)
+        buffer.copy(result, 0, a, 0, newSize)
+        return result
+    end
+
+    Array.bxor = function(a, b)
+        local x = buffer.create(buffer.len(a))
+
+        for i = 0, buffer.len(a) - 1 do
+            buffer.writeu8(x, i, bxor(buffer.readu8(a, i), buffer.readu8(b, i)))
+        end
+
+        return x
+    end
+
+    Array.substitute = function(input, sbox)
+        local out = buffer.create(buffer.len(input))
+
+        for i = 0, buffer.len(input) - 1 do
+            buffer.writeu8(out, i, buffer.readu8(sbox, buffer.readu8(input, i)))
+        end
+
+        return out
+    end
+
+    Array.permute = function(input, pbox)
+        local out = buffer.create(buffer.len(input))
+
+        for i = 0, buffer.len(pbox) - 1 do
+            buffer.writeu8(out, i, buffer.readu8(input, buffer.readu8(pbox, i) - 1))
+        end
+
+        return out
+    end
+
+    Array.copy = function(input)
+        local result = buffer.create(buffer.len(input))
+        buffer.copy(result, 0, input, 0, buffer.len(input))
+        return result
+    end
+
+    Array.slice = function(input, start, stop)
+        if start == nil then
+            start = 0
+        elseif start < 0 then
+            start = buffer.len(input) + start
+        end
+        if stop == nil then
+            stop = buffer.len(input)
+        elseif stop < 0 then
+            stop = buffer.len(input) + stop
+        end
+
+        local result = buffer.create(stop - start)
+        buffer.copy(result, 0, input, start, stop - start)
+        return result
+    end
+
+    return Array
 end
 
-Array.substitute = function(input, sbox)
-    local out = {};
 
-    for k, v in pairs(input) do
-        out[k] = sbox[v];
+
+function RoCrypt.utils.isStringHex(str)
+    if type(str) == "string" then
+        local hexPattern = '^%x+$'
+        return string.match(str, hexPattern) ~= nil
+    else 
+        return false
     end
-
-    return out;
 end
-
-Array.permute = function(input, pbox)
-    local out = {};
-
-    for k, v in pairs(pbox) do
-        out[k] = input[v];
-    end
-
-    return out;
-end
-
-Array.copy = function(input)
-    local out = {};
-
-    for k, v in pairs(input) do
-        out[k] = v;
-    end
-    return out;
-end
-
-Array.slice = function(input, start, stop)
-    local out = {};
-
-    if start == nil then
-        start = 1
-    elseif start < 0 then
-        start = #input + start + 1
-    end
-    if stop == nil then
-        stop = #input
-    elseif stop < 0 then
-        stop = #input + stop + 1
-    end
-
-    for i = start, stop do
-        table.insert(out, input[i])
-    end
-
-    return out;
-end
-
-return Array;
-end
-
 
 function RoCrypt.utils.bytes2word(b0,b1,b2,b3)
     local i = b3; i = lshift(i, 8)
@@ -1098,6 +630,48 @@ function RoCrypt.utils.bytes2word(b0,b1,b2,b3)
     i = bor(i, b1); i = lshift(i, 8)
     i = bor(i, b0)
     return i
+end
+
+function RoCrypt.utils.hex2bytes(hex)
+    local bytes = {}
+    for i = 1, #hex, 2 do
+        local byte = tonumber(hex:sub(i, i+1), 16)
+        table.insert(bytes, byte)
+    end
+    return bytes
+end
+function RoCrypt.utils.hex2string(hex)
+    local bytes = {}
+    for i = 1, #hex, 2 do
+        local byte = tonumber(hex:sub(i, i+1), 16)
+        table.insert(bytes, byte)
+    end
+
+    local str = ""
+    for i = 1, #bytes do
+        str = str .. string.char(bytes[i])
+    end
+    return str
+end
+
+function RoCrypt.utils.table2size(t)
+    local size = 0
+
+    for _, v in pairs(t) do
+        if type(v) == "string" then
+            size = size + #v
+        elseif type(v) == "number" then
+            size = size + 8
+        elseif type(v) == "boolean" then
+            size = size + 1
+        elseif type(v) == "table" then
+            size = size + RoCrypt.utils.tablesize(v)
+        else
+            size = size + 4  -- Assuming other types (functions, userdata) take 4 bytes
+        end
+    end
+
+    return size
 end
 
 function RoCrypt.utils.word2bytes(word)
@@ -1116,12 +690,801 @@ end
 
 
 function RoCrypt.utils.bytes2hex(byteArray)
-        local hexString = ""
-        for _, byte in ipairs(byteArray) do
-            hexString = hexString .. string.format("%02x", byte)
+    local hexString = ""
+    for _, byte in ipairs(byteArray) do
+        hexString = hexString .. string.format("%02x", byte)
+    end
+    return hexString
+
+end
+
+function RoCrypt.utils.string2hex(str)
+    local hex = ""
+    for i = 1, #str do
+        local byte = string.byte(str, i)
+        hex = hex .. string.format("%02x", byte)
+    end
+    return hex
+end
+
+function RoCrypt.utils.string2bytes(str)
+    local byteArray = {}
+    for i = 1, #str do
+        local c = string.sub(str, i, i)
+        table.insert(byteArray, string.byte(c))
+    end
+
+    return byteArray
+end
+
+function RoCrypt.utils.bytes2string(byteArray)
+    local str = ""
+    for i = 1, #byteArray do
+        local byte = byteArray[i]
+        str = str .. string.char(byte)
+    end
+
+    return str
+end
+
+
+
+
+function RoCrypt.utils.randomBytes(n, outputFormat)
+    local function seedGenerator()
+        local timeSeed = tick() * 1e7 
+        local randSeed = Random.new().NextInteger(Random.new(), -2147483648, 2147483647)
+        return timeSeed + randSeed
+    end
+    local complexSeed = seedGenerator()
+    local randomGenerator = Random.new(complexSeed)
+
+    local bytes = {}
+    for i = 1, n do
+        local randomByte = randomGenerator:NextInteger(0, 255)
+        bytes[i] = randomByte
+    end
+    local shuffleGenerator = Random.new(seedGenerator()) 
+    for i = n, 2, -1 do  -- Fisher-Yates shuffle
+        local j = shuffleGenerator:NextInteger(1, i)
+        bytes[i], bytes[j] = bytes[j], bytes[i]
+    end
+
+    if outputFormat == "string" then
+        for i,v in pairs(bytes) do 
+            bytes[i] = string.char(v)
         end
-        return hexString
-   
+        return table.concat(bytes)
+    elseif outputFormat == "hex" then
+        return RoCrypt.utils.bytes2hex(bytes)
+    else  -- Default to table
+        local byteTable = {}
+        for i = 1, #bytes do
+            byteTable[i] = string.byte(bytes[i])
+        end
+        return byteTable
+    end
+end
+
+function RoCrypt.utils.packInt(i: number)
+    return string.char(
+        bit32.extract(i, 24, 8),
+        bit32.extract(i, 16, 8),
+        bit32.extract(i, 8, 8),
+        bit32.extract(i, 0, 8)
+    )
+end
+
+
+
+local function sha_bootstrapper()
+    local AND_of_two_bytes = {}  -- look-up table (256*256 entries)
+    for idx = 0, 65535 do
+        local x = idx % 256
+        local y = (idx - x) / 256
+        local res = 0
+        local w = 1
+        while x * y ~= 0 do
+            local rx = x % 2
+            local ry = y % 2
+            res = res + rx * ry * w
+            x = (x - rx) / 2
+            y = (y - ry) / 2
+            w = w * 2
+        end
+        AND_of_two_bytes[idx] = res
+    end
+
+    local function HEX(x)
+        return format("%08x", x % 4294967296)
+    end
+    local sha2_K_lo, sha2_K_hi, sha2_H_lo, sha2_H_hi = {}, {}, {}, {}
+    local sha2_H_ext256 = {[224] = {}, [256] = sha2_H_hi}
+    local sha2_H_ext512_lo, sha2_H_ext512_hi = {[384] = {}, [512] = sha2_H_lo}, {[384] = {}, [512] = sha2_H_hi}
+
+    local common_W = {}
+
+    local function sha256_feed_64(H, K, str, W, offs, size)
+        for pos = offs, size + offs - 1, 64 do
+            for j = 1, 16 do
+                pos = pos + 4
+                local a, b, c, d = byte(str, pos - 3, pos)
+                W[j] = ((a * 256 + b) * 256 + c) * 256 + d
+            end
+            for j = 17, 64 do
+                local a, b = W[j-15], W[j-2]
+                W[j] = bxor(rrotate(a, 7), lrotate(a, 14), rshift(a, 3)) + bxor(lrotate(b, 15), lrotate(b, 13), rshift(b, 10)) + W[j-7] + W[j-16]
+            end
+            local a, b, c, d, e, f, g, h, z = H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8], nil
+            for j = 1, 64 do
+                z = bxor(rrotate(e, 6), rrotate(e, 11), lrotate(e, 7)) + band(e, f) + band(-1-e, g) + h + K[j] + W[j]
+                h = g
+                g = f
+                f = e
+                e = z + d
+                d = c
+                c = b
+                b = a
+                a = z + band(d, c) + band(a, bxor(d, c)) + bxor(rrotate(a, 2), rrotate(a, 13), lrotate(a, 10))
+            end
+            H[1], H[2], H[3], H[4] = (a + H[1]) % 4294967296, (b + H[2]) % 4294967296, (c + H[3]) % 4294967296, (d + H[4]) % 4294967296
+            H[5], H[6], H[7], H[8] = (e + H[5]) % 4294967296, (f + H[6]) % 4294967296, (g + H[7]) % 4294967296, (h + H[8]) % 4294967296
+        end
+    end
+
+    local function sha512_feed_128(H_lo, H_hi, K_lo, K_hi, str, W, offs, size)
+        -- offs >= 0, size >= 0, size is multiple of 128
+        -- W1_hi, W1_lo, W2_hi, W2_lo, ...   Wk_hi = W[2*k-1], Wk_lo = W[2*k]
+        for pos = offs, size + offs - 1, 128 do
+            for j = 1, 32 do
+                pos = pos + 4
+                local a, b, c, d = byte(str, pos - 3, pos)
+                W[j] = ((a * 256 + b) * 256 + c) * 256 + d
+            end
+            local tmp1, tmp2
+            for jj = 17 * 2, 80 * 2, 2 do
+                local a_lo, a_hi, b_lo, b_hi = W[jj-30], W[jj-31], W[jj-4], W[jj-5]
+                tmp1 = bxor(rshift(a_lo, 1) + lshift(a_hi, 31), rshift(a_lo, 8) + lshift(a_hi, 24), rshift(a_lo, 7) + lshift(a_hi, 25)) + bxor(rshift(b_lo, 19) + lshift(b_hi, 13), lshift(b_lo, 3) + rshift(b_hi, 29), rshift(b_lo, 6) + lshift(b_hi, 26)) + W[jj-14] + W[jj-32]
+                tmp2 = tmp1 % 4294967296
+                W[jj-1] = bxor(rshift(a_hi, 1) + lshift(a_lo, 31), rshift(a_hi, 8) + lshift(a_lo, 24), rshift(a_hi, 7)) + bxor(rshift(b_hi, 19) + lshift(b_lo, 13), lshift(b_hi, 3) + rshift(b_lo, 29), rshift(b_hi, 6)) + W[jj-15] + W[jj-33] + (tmp1 - tmp2) / 4294967296
+                W[jj] = tmp2
+            end
+            local a_lo, b_lo, c_lo, d_lo, e_lo, f_lo, g_lo, h_lo, z_lo = H_lo[1], H_lo[2], H_lo[3], H_lo[4], H_lo[5], H_lo[6], H_lo[7], H_lo[8], nil
+            local a_hi, b_hi, c_hi, d_hi, e_hi, f_hi, g_hi, h_hi, z_hi = H_hi[1], H_hi[2], H_hi[3], H_hi[4], H_hi[5], H_hi[6], H_hi[7], H_hi[8], nil
+            for j = 1, 80 do
+                local jj = 2 * j
+                tmp1 = bxor(rshift(e_lo, 14) + lshift(e_hi, 18), rshift(e_lo, 18) + lshift(e_hi, 14), lshift(e_lo, 23) + rshift(e_hi, 9)) + band(e_lo, f_lo) + band(-1-e_lo, g_lo) + h_lo + K_lo[j] + W[jj]
+                z_lo = tmp1 % 4294967296
+                z_hi = bxor(rshift(e_hi, 14) + lshift(e_lo, 18), rshift(e_hi, 18) + lshift(e_lo, 14), lshift(e_hi, 23) + rshift(e_lo, 9)) + band(e_hi, f_hi) + band(-1-e_hi, g_hi) + h_hi + K_hi[j] + W[jj-1] + (tmp1 - z_lo) / 4294967296
+                h_lo = g_lo
+                h_hi = g_hi
+                g_lo = f_lo
+                g_hi = f_hi
+                f_lo = e_lo
+                f_hi = e_hi
+                tmp1 = z_lo + d_lo
+                e_lo = tmp1 % 4294967296
+                e_hi = z_hi + d_hi + (tmp1 - e_lo) / 4294967296
+                d_lo = c_lo
+                d_hi = c_hi
+                c_lo = b_lo
+                c_hi = b_hi
+                b_lo = a_lo
+                b_hi = a_hi
+                tmp1 = z_lo + band(d_lo, c_lo) + band(b_lo, bxor(d_lo, c_lo)) + bxor(rshift(b_lo, 28) + lshift(b_hi, 4), lshift(b_lo, 30) + rshift(b_hi, 2), lshift(b_lo, 25) + rshift(b_hi, 7))
+                a_lo = tmp1 % 4294967296
+                a_hi = z_hi + (band(d_hi, c_hi) + band(b_hi, bxor(d_hi, c_hi))) + bxor(rshift(b_hi, 28) + lshift(b_lo, 4), lshift(b_hi, 30) + rshift(b_lo, 2), lshift(b_hi, 25) + rshift(b_lo, 7)) + (tmp1 - a_lo) / 4294967296
+            end
+            tmp1 = H_lo[1] + a_lo
+            tmp2 = tmp1 % 4294967296
+            H_lo[1], H_hi[1] = tmp2, (H_hi[1] + a_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+            tmp1 = H_lo[2] + b_lo
+            tmp2 = tmp1 % 4294967296
+            H_lo[2], H_hi[2] = tmp2, (H_hi[2] + b_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+            tmp1 = H_lo[3] + c_lo
+            tmp2 = tmp1 % 4294967296
+            H_lo[3], H_hi[3] = tmp2, (H_hi[3] + c_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+            tmp1 = H_lo[4] + d_lo
+            tmp2 = tmp1 % 4294967296
+            H_lo[4], H_hi[4] = tmp2, (H_hi[4] + d_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+            tmp1 = H_lo[5] + e_lo
+            tmp2 = tmp1 % 4294967296
+            H_lo[5], H_hi[5] = tmp2, (H_hi[5] + e_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+            tmp1 = H_lo[6] + f_lo
+            tmp2 = tmp1 % 4294967296
+            H_lo[6], H_hi[6] = tmp2, (H_hi[6] + f_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+            tmp1 = H_lo[7] + g_lo
+            tmp2 = tmp1 % 4294967296
+            H_lo[7], H_hi[7] = tmp2, (H_hi[7] + g_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+            tmp1 = H_lo[8] + h_lo
+            tmp2 = tmp1 % 4294967296
+            H_lo[8], H_hi[8] = tmp2, (H_hi[8] + h_hi + (tmp1 - tmp2) / 4294967296) % 4294967296
+        end
+    end
+
+    --------------------------------------------------------------------------------
+    -- CALCULATING THE MAGIC NUMBERS (roots of primes)
+    --------------------------------------------------------------------------------
+
+    do
+        local function mul(src1, src2, factor, result_length)
+            -- Long arithmetic multiplication: src1 * src2 * factor
+            -- src1, src2 - long integers (arrays of digits in base 2^24)
+            -- factor - short integer
+            local result = {}
+            local carry = 0
+            local value = 0.0
+            local weight = 1.0
+            for j = 1, result_length do
+                local prod = 0
+                for k = math.max(1, j + 1 - #src2), math.min(j, #src1) do
+                    prod = prod + src1[k] * src2[j + 1 - k]
+                end
+                carry = carry + prod * factor
+                local digit = carry % 16777216
+                result[j] = digit
+                carry = floor(carry / 16777216)
+                value = value + digit * weight
+                weight = weight * 2^24
+            end
+            return result,value
+        end
+
+        local idx, step, p, one  = 0, {4, 1, 2, -2, 2}, 4, {1}
+        local sqrt_hi, sqrt_lo, idx_disp = sha2_H_hi, sha2_H_lo, 0
+        repeat
+            p = p + step[p % 6]
+            local d = 1
+            repeat
+                d = d + step[d % 6]
+                if d * d > p then
+                    idx = idx + 1
+                    local root = p^(1/3)
+                    local R = mul({floor(root * 2^40)}, one, 1, 2)
+                    local _, delta = mul(R, mul(R, R, 1, 4), -1, 4)
+                    local hi = R[2] % 65536 * 65536 + floor(R[1] / 256)
+                    local lo = R[1] % 256 * 16777216 + floor(delta * (2^-56 / 3) * root / p)
+                    sha2_K_hi[idx], sha2_K_lo[idx] = hi, lo
+                    if idx < 17 then
+                        root = p^(1/2)
+                        R = mul({floor(root * 2^40)}, one, 1, 2)
+                        _, delta = mul(R, R, -1, 2)
+                        hi = R[2] % 65536 * 65536 + floor(R[1] / 256)
+                        lo = R[1] % 256 * 16777216 + floor(delta * 2^-17 / root)
+                        sha2_H_ext256[224][idx + idx_disp] = lo
+                        sqrt_hi[idx + idx_disp], sqrt_lo[idx + idx_disp] = hi, lo
+                        if idx == 8 then
+                            sqrt_hi, sqrt_lo, idx_disp = sha2_H_ext512_hi[384], sha2_H_ext512_lo[384], -8
+                        end
+                    end
+                    break
+                end
+            until p % d == 0
+        until idx > 79
+    end
+
+    -- Calculating IV for SHA512/224 and SHA512/256
+    for width = 224, 256, 32 do
+        local H_lo, H_hi = {}, {}
+        for j = 1, 8 do
+            H_lo[j] = bxor(sha2_H_lo[j], 0xa5a5a5a5)
+            H_hi[j] = bxor(sha2_H_hi[j], 0xa5a5a5a5)
+        end
+        sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, "SHA-512/"..tonumber(width).."\128"..rep("\0", 115).."\88", common_W, 0, 128)
+        sha2_H_ext512_lo[width] = H_lo
+        sha2_H_ext512_hi[width] = H_hi
+    end
+
+    --------------------------------------------------------------------------------
+    -- FINAL FUNCTIONS
+    --------------------------------------------------------------------------------
+
+    function sha256ext(width, text)
+
+        -- Create an instance (private objects for current calculation)
+        local H, length, tail = {unpack(sha2_H_ext256[width])}, 0, ""
+
+        local function partial(text_part)
+            if text_part then
+                if tail then
+                    length = length + #text_part
+                    local offs = 0
+                    if tail ~= "" and #tail + #text_part >= 64 then
+                        offs = 64 - #tail
+                        sha256_feed_64(H, sha2_K_hi, tail..sub(text_part, 1, offs), common_W, 0, 64)
+                        tail = ""
+                    end
+                    local size = #text_part - offs
+                    local size_tail = size % 64
+                    sha256_feed_64(H, sha2_K_hi, text_part, common_W, offs, size - size_tail)
+                    tail = tail..sub(text_part, #text_part + 1 - size_tail)
+                    return partial
+                else
+                    error("Adding more chunks is not allowed after asking for final result", 2)
+                end
+            else
+                if tail then
+                    local final_blocks = {tail, "\128", rep("\0", (-9 - length) % 64 + 1)}
+                    tail = nil
+                    -- Assuming user data length is shorter than 2^53 bytes
+                    -- Anyway, it looks very unrealistic that one would spend enough time to process a 2^53 bytes of data by using this Lua script :-)
+                    -- 2^53 bytes = 2^56 bits, so "bit-counter" fits in 7 bytes
+                    length = length * (8 / 256^7)  -- convert "byte-counter" to "bit-counter" and move floating point to the left
+                    for j = 4, 10 do
+                        length = length % 1 * 256
+                        final_blocks[j] = char(floor(length))
+                    end
+                    final_blocks = table.concat(final_blocks)
+                    sha256_feed_64(H, sha2_K_hi, final_blocks, common_W, 0, #final_blocks)
+                    local max_reg = width / 32
+                    for j = 1, max_reg do
+                        H[j] = HEX(H[j])
+                    end
+                    H = table.concat(H, "", 1, max_reg)
+                end
+                return H
+            end
+        end
+
+        if text then
+            -- Actually perform calculations and return the SHA256 digest of a message
+            return partial(text)()
+        else
+            -- Return function for partial chunk loading
+            -- User should feed every chunks of input data as single argument to this function and receive SHA256 digest by invoking this function without an argument
+            return partial
+        end
+
+    end
+
+
+    function sha512ext(width, text)
+
+        -- Create an instance (private objects for current calculation)
+        local length, tail, H_lo, H_hi = 0, "", {unpack(sha2_H_ext512_lo[width])}, {unpack(sha2_H_ext512_hi[width])}
+
+        local function partial(text_part)
+            if text_part then
+                if tail then
+                    length = length + #text_part
+                    local offs = 0
+                    if tail ~= "" and #tail + #text_part >= 128 then
+                        offs = 128 - #tail
+                        sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, tail..sub(text_part, 1, offs), common_W, 0, 128)
+                        tail = ""
+                    end
+                    local size = #text_part - offs
+                    local size_tail = size % 128
+                    sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, text_part, common_W, offs, size - size_tail)
+                    tail = tail..sub(text_part, #text_part + 1 - size_tail)
+                    return partial
+                else
+                    error("Adding more chunks is not allowed after asking for final result", 2)
+                end
+            else
+                if tail then
+                    local final_blocks = {tail, "\128", rep("\0", (-17-length) % 128 + 9)}
+                    tail = nil
+                    -- Assuming user data length is shorter than 2^53 bytes
+                    -- 2^53 bytes = 2^56 bits, so "bit-counter" fits in 7 bytes
+                    length = length * (8 / 256^7)  -- convert "byte-counter" to "bit-counter" and move floating point to the left
+                    for j = 4, 10 do
+                        length = length % 1 * 256
+                        final_blocks[j] = char(floor(length))
+                    end
+                    final_blocks = table.concat(final_blocks)
+                    sha512_feed_128(H_lo, H_hi, sha2_K_lo, sha2_K_hi, final_blocks, common_W, 0, #final_blocks)
+                    local max_reg = math.ceil(width / 64)
+                    for j = 1, max_reg do
+                        H_lo[j] = HEX(H_hi[j])..HEX(H_lo[j])
+                    end
+                    H_hi = nil
+                    H_lo = table.concat(H_lo, "", 1, max_reg):sub(1, width / 4)
+                end
+                return H_lo
+            end
+        end
+
+        if text then
+            -- Actually perform calculations and return the SHA256 digest of a message
+            return partial(text)()
+        else
+            -- Return function for partial chunk loading
+            -- User should feed every chunks of input data as single argument to this function and receive SHA256 digest by invoking this function without an argument
+            return partial
+        end
+
+    end
+
+
+end
+
+function keccak(block_size_in_bytes, digest_size, is_SHAKE, message)
+    local sha2_K_lo, sha2_K_hi, sha2_H_lo, sha2_H_hi, sha3_RC_lo, sha3_RC_hi = {}, {}, {}, {}, {}, {}
+    local HEX64, bxor64A5, lanes_index_base = nil, nil, nil -- defined only for branches that internally use 64-bit integers: "INT64" and "FFI"
+    local K_lo_modulo, hi_factor, hi_factor_keccak = 4294967296, 0, 0
+    do
+        local sh_reg = 29
+        local function next_bit()
+            local r = sh_reg % 2
+            sh_reg = bxor((sh_reg - r) / 2, 142 * r)
+            return r
+        end
+
+        for idx = 1, 24 do
+            local lo, m = 0, nil
+            for _ = 1, 6 do
+                m = m and m * m * 2 or 1
+                lo = lo + next_bit() * m
+            end
+
+            local hi = next_bit() * m
+            sha3_RC_hi[idx], sha3_RC_lo[idx] = hi, lo + hi * hi_factor_keccak
+        end
+    end
+
+
+
+
+    local function keccak_feed(lanes_lo, lanes_hi, str, offs, size, block_size_in_bytes)
+        -- This is an example of a Lua function having 79 local variables :-)
+        -- offs >= 0, size >= 0, size is multiple of block_size_in_bytes, block_size_in_bytes is positive multiple of 8
+        local RC_lo, RC_hi = sha3_RC_lo, sha3_RC_hi
+        local qwords_qty = block_size_in_bytes / 8
+        for pos = offs, offs + size - 1, block_size_in_bytes do
+            for j = 1, qwords_qty do
+                local a, b, c, d = string.byte(str, pos + 1, pos + 4)
+                lanes_lo[j] = bxor(lanes_lo[j], ((d * 256 + c) * 256 + b) * 256 + a)
+                pos = pos + 8
+                a, b, c, d = string.byte(str, pos - 3, pos)
+                lanes_hi[j] = bxor(lanes_hi[j], ((d * 256 + c) * 256 + b) * 256 + a)
+            end
+
+            local L01_lo, L01_hi, L02_lo, L02_hi, L03_lo, L03_hi, L04_lo, L04_hi, L05_lo, L05_hi, L06_lo, L06_hi, L07_lo, L07_hi, L08_lo, L08_hi, L09_lo, L09_hi, L10_lo, L10_hi, L11_lo, L11_hi, L12_lo, L12_hi, L13_lo, L13_hi, L14_lo, L14_hi, L15_lo, L15_hi, L16_lo, L16_hi, L17_lo, L17_hi, L18_lo, L18_hi, L19_lo, L19_hi, L20_lo, L20_hi, L21_lo, L21_hi, L22_lo, L22_hi, L23_lo, L23_hi, L24_lo, L24_hi, L25_lo, L25_hi = lanes_lo[1], lanes_hi[1], lanes_lo[2], lanes_hi[2], lanes_lo[3], lanes_hi[3], lanes_lo[4], lanes_hi[4], lanes_lo[5], lanes_hi[5], lanes_lo[6], lanes_hi[6], lanes_lo[7], lanes_hi[7], lanes_lo[8], lanes_hi[8], lanes_lo[9], lanes_hi[9], lanes_lo[10], lanes_hi[10], lanes_lo[11], lanes_hi[11], lanes_lo[12], lanes_hi[12], lanes_lo[13], lanes_hi[13], lanes_lo[14], lanes_hi[14], lanes_lo[15], lanes_hi[15], lanes_lo[16], lanes_hi[16], lanes_lo[17], lanes_hi[17], lanes_lo[18], lanes_hi[18], lanes_lo[19], lanes_hi[19], lanes_lo[20], lanes_hi[20], lanes_lo[21], lanes_hi[21], lanes_lo[22], lanes_hi[22], lanes_lo[23], lanes_hi[23], lanes_lo[24], lanes_hi[24], lanes_lo[25], lanes_hi[25]
+
+            for round_idx = 1, 24 do
+                local C1_lo = bxor(L01_lo, L06_lo, L11_lo, L16_lo, L21_lo)
+                local C1_hi = bxor(L01_hi, L06_hi, L11_hi, L16_hi, L21_hi)
+                local C2_lo = bxor(L02_lo, L07_lo, L12_lo, L17_lo, L22_lo)
+                local C2_hi = bxor(L02_hi, L07_hi, L12_hi, L17_hi, L22_hi)
+                local C3_lo = bxor(L03_lo, L08_lo, L13_lo, L18_lo, L23_lo)
+                local C3_hi = bxor(L03_hi, L08_hi, L13_hi, L18_hi, L23_hi)
+                local C4_lo = bxor(L04_lo, L09_lo, L14_lo, L19_lo, L24_lo)
+                local C4_hi = bxor(L04_hi, L09_hi, L14_hi, L19_hi, L24_hi)
+                local C5_lo = bxor(L05_lo, L10_lo, L15_lo, L20_lo, L25_lo)
+                local C5_hi = bxor(L05_hi, L10_hi, L15_hi, L20_hi, L25_hi)
+
+                local D_lo = bxor(C1_lo, C3_lo * 2 + (C3_hi % 2^32 - C3_hi % 2^31) / 2^31)
+                local D_hi = bxor(C1_hi, C3_hi * 2 + (C3_lo % 2^32 - C3_lo % 2^31) / 2^31)
+
+                local T0_lo = bxor(D_lo, L02_lo)
+                local T0_hi = bxor(D_hi, L02_hi)
+                local T1_lo = bxor(D_lo, L07_lo)
+                local T1_hi = bxor(D_hi, L07_hi)
+                local T2_lo = bxor(D_lo, L12_lo)
+                local T2_hi = bxor(D_hi, L12_hi)
+                local T3_lo = bxor(D_lo, L17_lo)
+                local T3_hi = bxor(D_hi, L17_hi)
+                local T4_lo = bxor(D_lo, L22_lo)
+                local T4_hi = bxor(D_hi, L22_hi)
+
+                L02_lo = (T1_lo % 2^32 - T1_lo % 2^20) / 2^20 + T1_hi * 2^12
+                L02_hi = (T1_hi % 2^32 - T1_hi % 2^20) / 2^20 + T1_lo * 2^12
+                L07_lo = (T3_lo % 2^32 - T3_lo % 2^19) / 2^19 + T3_hi * 2^13
+                L07_hi = (T3_hi % 2^32 - T3_hi % 2^19) / 2^19 + T3_lo * 2^13
+                L12_lo = T0_lo * 2 + (T0_hi % 2^32 - T0_hi % 2^31) / 2^31
+                L12_hi = T0_hi * 2 + (T0_lo % 2^32 - T0_lo % 2^31) / 2^31
+                L17_lo = T2_lo * 2^10 + (T2_hi % 2^32 - T2_hi % 2^22) / 2^22
+                L17_hi = T2_hi * 2^10 + (T2_lo % 2^32 - T2_lo % 2^22) / 2^22
+                L22_lo = T4_lo * 2^2 + (T4_hi % 2^32 - T4_hi % 2^30) / 2^30
+                L22_hi = T4_hi * 2^2 + (T4_lo % 2^32 - T4_lo % 2^30) / 2^30
+
+                D_lo = bxor(C2_lo, C4_lo * 2 + (C4_hi % 2^32 - C4_hi % 2^31) / 2^31)
+                D_hi = bxor(C2_hi, C4_hi * 2 + (C4_lo % 2^32 - C4_lo % 2^31) / 2^31)
+
+                T0_lo = bxor(D_lo, L03_lo)
+                T0_hi = bxor(D_hi, L03_hi)
+                T1_lo = bxor(D_lo, L08_lo)
+                T1_hi = bxor(D_hi, L08_hi)
+                T2_lo = bxor(D_lo, L13_lo)
+                T2_hi = bxor(D_hi, L13_hi)
+                T3_lo = bxor(D_lo, L18_lo)
+                T3_hi = bxor(D_hi, L18_hi)
+                T4_lo = bxor(D_lo, L23_lo)
+                T4_hi = bxor(D_hi, L23_hi)
+
+                L03_lo = (T2_lo % 2^32 - T2_lo % 2^21) / 2^21 + T2_hi * 2^11
+                L03_hi = (T2_hi % 2^32 - T2_hi % 2^21) / 2^21 + T2_lo * 2^11
+                L08_lo = (T4_lo % 2^32 - T4_lo % 2^3) / 2^3 + T4_hi * 2^29 % 2^32
+                L08_hi = (T4_hi % 2^32 - T4_hi % 2^3) / 2^3 + T4_lo * 2^29 % 2^32
+                L13_lo = T1_lo * 2^6 + (T1_hi % 2^32 - T1_hi % 2^26) / 2^26
+                L13_hi = T1_hi * 2^6 + (T1_lo % 2^32 - T1_lo % 2^26) / 2^26
+                L18_lo = T3_lo * 2^15 + (T3_hi % 2^32 - T3_hi % 2^17) / 2^17
+                L18_hi = T3_hi * 2^15 + (T3_lo % 2^32 - T3_lo % 2^17) / 2^17
+                L23_lo = (T0_lo % 2^32 - T0_lo % 2^2) / 2^2 + T0_hi * 2^30 % 2^32
+                L23_hi = (T0_hi % 2^32 - T0_hi % 2^2) / 2^2 + T0_lo * 2^30 % 2^32
+
+                D_lo = bxor(C3_lo, C5_lo * 2 + (C5_hi % 2^32 - C5_hi % 2^31) / 2^31)
+                D_hi = bxor(C3_hi, C5_hi * 2 + (C5_lo % 2^32 - C5_lo % 2^31) / 2^31)
+
+                T0_lo = bxor(D_lo, L04_lo)
+                T0_hi = bxor(D_hi, L04_hi)
+                T1_lo = bxor(D_lo, L09_lo)
+                T1_hi = bxor(D_hi, L09_hi)
+                T2_lo = bxor(D_lo, L14_lo)
+                T2_hi = bxor(D_hi, L14_hi)
+                T3_lo = bxor(D_lo, L19_lo)
+                T3_hi = bxor(D_hi, L19_hi)
+                T4_lo = bxor(D_lo, L24_lo)
+                T4_hi = bxor(D_hi, L24_hi)
+
+                L04_lo = T3_lo * 2^21 % 2^32 + (T3_hi % 2^32 - T3_hi % 2^11) / 2^11
+                L04_hi = T3_hi * 2^21 % 2^32 + (T3_lo % 2^32 - T3_lo % 2^11) / 2^11
+                L09_lo = T0_lo * 2^28 % 2^32 + (T0_hi % 2^32 - T0_hi % 2^4) / 2^4
+                L09_hi = T0_hi * 2^28 % 2^32 + (T0_lo % 2^32 - T0_lo % 2^4) / 2^4
+                L14_lo = T2_lo * 2^25 % 2^32 + (T2_hi % 2^32 - T2_hi % 2^7) / 2^7
+                L14_hi = T2_hi * 2^25 % 2^32 + (T2_lo % 2^32 - T2_lo % 2^7) / 2^7
+                L19_lo = (T4_lo % 2^32 - T4_lo % 2^8) / 2^8 + T4_hi * 2^24 % 2^32
+                L19_hi = (T4_hi % 2^32 - T4_hi % 2^8) / 2^8 + T4_lo * 2^24 % 2^32
+                L24_lo = (T1_lo % 2^32 - T1_lo % 2^9) / 2^9 + T1_hi * 2^23 % 2^32
+                L24_hi = (T1_hi % 2^32 - T1_hi % 2^9) / 2^9 + T1_lo * 2^23 % 2^32
+
+                D_lo = bxor(C4_lo, C1_lo * 2 + (C1_hi % 2^32 - C1_hi % 2^31) / 2^31)
+                D_hi = bxor(C4_hi, C1_hi * 2 + (C1_lo % 2^32 - C1_lo % 2^31) / 2^31)
+
+                T0_lo = bxor(D_lo, L05_lo)
+                T0_hi = bxor(D_hi, L05_hi)
+                T1_lo = bxor(D_lo, L10_lo)
+                T1_hi = bxor(D_hi, L10_hi)
+                T2_lo = bxor(D_lo, L15_lo)
+                T2_hi = bxor(D_hi, L15_hi)
+                T3_lo = bxor(D_lo, L20_lo)
+                T3_hi = bxor(D_hi, L20_hi)
+                T4_lo = bxor(D_lo, L25_lo)
+                T4_hi = bxor(D_hi, L25_hi)
+
+                L05_lo = T4_lo * 2^14 + (T4_hi % 2^32 - T4_hi % 2^18) / 2^18
+                L05_hi = T4_hi * 2^14 + (T4_lo % 2^32 - T4_lo % 2^18) / 2^18
+                L10_lo = T1_lo * 2^20 % 2^32 + (T1_hi % 2^32 - T1_hi % 2^12) / 2^12
+                L10_hi = T1_hi * 2^20 % 2^32 + (T1_lo % 2^32 - T1_lo % 2^12) / 2^12
+                L15_lo = T3_lo * 2^8 + (T3_hi % 2^32 - T3_hi % 2^24) / 2^24
+                L15_hi = T3_hi * 2^8 + (T3_lo % 2^32 - T3_lo % 2^24) / 2^24
+                L20_lo = T0_lo * 2^27 % 2^32 + (T0_hi % 2^32 - T0_hi % 2^5) / 2^5
+                L20_hi = T0_hi * 2^27 % 2^32 + (T0_lo % 2^32 - T0_lo % 2^5) / 2^5
+                L25_lo = (T2_lo % 2^32 - T2_lo % 2^25) / 2^25 + T2_hi * 2^7
+                L25_hi = (T2_hi % 2^32 - T2_hi % 2^25) / 2^25 + T2_lo * 2^7
+
+                D_lo = bxor(C5_lo, C2_lo * 2 + (C2_hi % 2^32 - C2_hi % 2^31) / 2^31)
+                D_hi = bxor(C5_hi, C2_hi * 2 + (C2_lo % 2^32 - C2_lo % 2^31) / 2^31)
+
+                T1_lo = bxor(D_lo, L06_lo)
+                T1_hi = bxor(D_hi, L06_hi)
+                T2_lo = bxor(D_lo, L11_lo)
+                T2_hi = bxor(D_hi, L11_hi)
+                T3_lo = bxor(D_lo, L16_lo)
+                T3_hi = bxor(D_hi, L16_hi)
+                T4_lo = bxor(D_lo, L21_lo)
+                T4_hi = bxor(D_hi, L21_hi)
+
+                L06_lo = T2_lo * 2^3 + (T2_hi % 2^32 - T2_hi % 2^29) / 2^29
+                L06_hi = T2_hi * 2^3 + (T2_lo % 2^32 - T2_lo % 2^29) / 2^29
+                L11_lo = T4_lo * 2^18 + (T4_hi % 2^32 - T4_hi % 2^14) / 2^14
+                L11_hi = T4_hi * 2^18 + (T4_lo % 2^32 - T4_lo % 2^14) / 2^14
+                L16_lo = (T1_lo % 2^32 - T1_lo % 2^28) / 2^28 + T1_hi * 2^4
+                L16_hi = (T1_hi % 2^32 - T1_hi % 2^28) / 2^28 + T1_lo * 2^4
+                L21_lo = (T3_lo % 2^32 - T3_lo % 2^23) / 2^23 + T3_hi * 2^9
+                L21_hi = (T3_hi % 2^32 - T3_hi % 2^23) / 2^23 + T3_lo * 2^9
+
+                L01_lo = bxor(D_lo, L01_lo)
+                L01_hi = bxor(D_hi, L01_hi)
+                L01_lo, L02_lo, L03_lo, L04_lo, L05_lo = bxor(L01_lo, band(-1 - L02_lo, L03_lo)), bxor(L02_lo, band(-1 - L03_lo, L04_lo)), bxor(L03_lo, band(-1 - L04_lo, L05_lo)), bxor(L04_lo, band(-1 - L05_lo, L01_lo)), bxor(L05_lo, band(-1 - L01_lo, L02_lo))
+                L01_hi, L02_hi, L03_hi, L04_hi, L05_hi = bxor(L01_hi, band(-1 - L02_hi, L03_hi)), bxor(L02_hi, band(-1 - L03_hi, L04_hi)), bxor(L03_hi, band(-1 - L04_hi, L05_hi)), bxor(L04_hi, band(-1 - L05_hi, L01_hi)), bxor(L05_hi, band(-1 - L01_hi, L02_hi))
+                L06_lo, L07_lo, L08_lo, L09_lo, L10_lo = bxor(L09_lo, band(-1 - L10_lo, L06_lo)), bxor(L10_lo, band(-1 - L06_lo, L07_lo)), bxor(L06_lo, band(-1 - L07_lo, L08_lo)), bxor(L07_lo, band(-1 - L08_lo, L09_lo)), bxor(L08_lo, band(-1 - L09_lo, L10_lo))
+                L06_hi, L07_hi, L08_hi, L09_hi, L10_hi = bxor(L09_hi, band(-1 - L10_hi, L06_hi)), bxor(L10_hi, band(-1 - L06_hi, L07_hi)), bxor(L06_hi, band(-1 - L07_hi, L08_hi)), bxor(L07_hi, band(-1 - L08_hi, L09_hi)), bxor(L08_hi, band(-1 - L09_hi, L10_hi))
+                L11_lo, L12_lo, L13_lo, L14_lo, L15_lo = bxor(L12_lo, band(-1 - L13_lo, L14_lo)), bxor(L13_lo, band(-1 - L14_lo, L15_lo)), bxor(L14_lo, band(-1 - L15_lo, L11_lo)), bxor(L15_lo, band(-1 - L11_lo, L12_lo)), bxor(L11_lo, band(-1 - L12_lo, L13_lo))
+                L11_hi, L12_hi, L13_hi, L14_hi, L15_hi = bxor(L12_hi, band(-1 - L13_hi, L14_hi)), bxor(L13_hi, band(-1 - L14_hi, L15_hi)), bxor(L14_hi, band(-1 - L15_hi, L11_hi)), bxor(L15_hi, band(-1 - L11_hi, L12_hi)), bxor(L11_hi, band(-1 - L12_hi, L13_hi))
+                L16_lo, L17_lo, L18_lo, L19_lo, L20_lo = bxor(L20_lo, band(-1 - L16_lo, L17_lo)), bxor(L16_lo, band(-1 - L17_lo, L18_lo)), bxor(L17_lo, band(-1 - L18_lo, L19_lo)), bxor(L18_lo, band(-1 - L19_lo, L20_lo)), bxor(L19_lo, band(-1 - L20_lo, L16_lo))
+                L16_hi, L17_hi, L18_hi, L19_hi, L20_hi = bxor(L20_hi, band(-1 - L16_hi, L17_hi)), bxor(L16_hi, band(-1 - L17_hi, L18_hi)), bxor(L17_hi, band(-1 - L18_hi, L19_hi)), bxor(L18_hi, band(-1 - L19_hi, L20_hi)), bxor(L19_hi, band(-1 - L20_hi, L16_hi))
+                L21_lo, L22_lo, L23_lo, L24_lo, L25_lo = bxor(L23_lo, band(-1 - L24_lo, L25_lo)), bxor(L24_lo, band(-1 - L25_lo, L21_lo)), bxor(L25_lo, band(-1 - L21_lo, L22_lo)), bxor(L21_lo, band(-1 - L22_lo, L23_lo)), bxor(L22_lo, band(-1 - L23_lo, L24_lo))
+                L21_hi, L22_hi, L23_hi, L24_hi, L25_hi = bxor(L23_hi, band(-1 - L24_hi, L25_hi)), bxor(L24_hi, band(-1 - L25_hi, L21_hi)), bxor(L25_hi, band(-1 - L21_hi, L22_hi)), bxor(L21_hi, band(-1 - L22_hi, L23_hi)), bxor(L22_hi, band(-1 - L23_hi, L24_hi))
+                L01_lo = bxor(L01_lo, RC_lo[round_idx])
+                L01_hi = L01_hi + (RC_hi[round_idx]) -- RC_hi[] is either 0 or 0x80000000, so we could use fast addition instead of slow bxor
+            end
+
+            lanes_lo[1] = L01_lo
+            lanes_hi[1] = L01_hi
+            lanes_lo[2] = L02_lo
+            lanes_hi[2] = L02_hi
+            lanes_lo[3] = L03_lo
+            lanes_hi[3] = L03_hi
+            lanes_lo[4] = L04_lo
+            lanes_hi[4] = L04_hi
+            lanes_lo[5] = L05_lo
+            lanes_hi[5] = L05_hi
+            lanes_lo[6] = L06_lo
+            lanes_hi[6] = L06_hi
+            lanes_lo[7] = L07_lo
+            lanes_hi[7] = L07_hi
+            lanes_lo[8] = L08_lo
+            lanes_hi[8] = L08_hi
+            lanes_lo[9] = L09_lo
+            lanes_hi[9] = L09_hi
+            lanes_lo[10] = L10_lo
+            lanes_hi[10] = L10_hi
+            lanes_lo[11] = L11_lo
+            lanes_hi[11] = L11_hi
+            lanes_lo[12] = L12_lo
+            lanes_hi[12] = L12_hi
+            lanes_lo[13] = L13_lo
+            lanes_hi[13] = L13_hi
+            lanes_lo[14] = L14_lo
+            lanes_hi[14] = L14_hi
+            lanes_lo[15] = L15_lo
+            lanes_hi[15] = L15_hi
+            lanes_lo[16] = L16_lo
+            lanes_hi[16] = L16_hi
+            lanes_lo[17] = L17_lo
+            lanes_hi[17] = L17_hi
+            lanes_lo[18] = L18_lo
+            lanes_hi[18] = L18_hi
+            lanes_lo[19] = L19_lo
+            lanes_hi[19] = L19_hi
+            lanes_lo[20] = L20_lo
+            lanes_hi[20] = L20_hi
+            lanes_lo[21] = L21_lo
+            lanes_hi[21] = L21_hi
+            lanes_lo[22] = L22_lo
+            lanes_hi[22] = L22_hi
+            lanes_lo[23] = L23_lo
+            lanes_hi[23] = L23_hi
+            lanes_lo[24] = L24_lo
+            lanes_hi[24] = L24_hi
+            lanes_lo[25] = L25_lo
+            lanes_hi[25] = L25_hi
+        end
+    end
+
+
+
+    -- "block_size_in_bytes" is multiple of 8
+    if type(digest_size) ~= "number" then
+        -- arguments in SHAKE are swapped:
+        --    NIST FIPS 202 defines SHAKE(message,num_bits)
+        --    this module   defines SHAKE(num_bytes,message)
+        -- it's easy to forget about this swap, hence the check
+        error("Argument 'digest_size' must be a number", 2)
+    end
+
+    -- Create an instance (private objects for current calculation)
+    local tail, lanes_lo, lanes_hi = "", table.create(25, 0), hi_factor_keccak == 0 and table.create(25, 0)
+    local result
+
+    --~     pad the input N using the pad function, yielding a padded bit string P with a length divisible by r (such that n = len(P)/r is integer),
+    --~     break P into n consecutive r-bit pieces P0, ..., Pn-1 (last is zero-padded)
+    --~     initialize the state S to a string of b 0 bits.
+    --~     absorb the input into the state: For each block Pi,
+    --~         extend Pi at the end by a string of c 0 bits, yielding one of length b,
+    --~         bxor that with S and
+    --~         apply the block permutation f to the result, yielding a new state S
+    --~     initialize Z to be the empty string
+    --~     while the length of Z is less than d:
+    --~         append the first r bits of S to Z
+    --~         if Z is still less than d bits long, apply f to S, yielding a new state S.
+    --~     truncate Z to d bits
+    local function partial(message_part)
+        if message_part then
+            local partLength = #message_part
+            if tail then
+                local offs = 0
+                if tail ~= "" and #tail + partLength >= block_size_in_bytes then
+                    offs = block_size_in_bytes - #tail
+                    keccak_feed(lanes_lo, lanes_hi, tail .. string.sub(message_part, 1, offs), 0, block_size_in_bytes, block_size_in_bytes)
+                    tail = ""
+                end
+                local size = partLength - offs
+                local size_tail = size % block_size_in_bytes
+                keccak_feed(lanes_lo, lanes_hi, message_part, offs, size - size_tail, block_size_in_bytes)
+                tail = tail .. string.sub(message_part, partLength + 1 - size_tail)
+                return partial
+            else
+                error("Adding more chunks is not allowed after receiving the result", 2)
+            end
+        else
+            if tail then
+                -- append the following bits to the message: for usual SHA3: 011(0*)1, for SHAKE: 11111(0*)1
+                local gap_start = is_SHAKE and 31 or 6
+                tail = tail .. (#tail + 1 == block_size_in_bytes and string.char(gap_start + 128) or string.char(gap_start) .. rep("\0", (-2 - #tail) % block_size_in_bytes) .. "\128")
+                keccak_feed(lanes_lo, lanes_hi, tail, 0, #tail, block_size_in_bytes)
+                tail = nil
+
+                local lanes_used = 0
+                local total_lanes = floor(block_size_in_bytes / 8)
+                local qwords = {}
+
+                local function get_next_qwords_of_digest(qwords_qty)
+                    -- returns not more than 'qwords_qty' qwords ('qwords_qty' might be non-integer)
+                    -- doesn't go across keccak-buffer boundary
+                    -- block_size_in_bytes is a multiple of 8, so, keccak-buffer contains integer number of qwords
+                    if lanes_used >= total_lanes then
+                        keccak_feed(lanes_lo, lanes_hi, "\0\0\0\0\0\0\0\0", 0, 8, 8)
+                        lanes_used = 0
+                    end
+
+                    qwords_qty = floor(math.min(qwords_qty, total_lanes - lanes_used))
+                    if hi_factor_keccak ~= 0 then
+                        for j = 1, qwords_qty do
+                            qwords[j] = HEX64(lanes_lo[lanes_used + j - 1 + lanes_index_base])
+                        end
+                    else
+                        for j = 1, qwords_qty do
+                            qwords[j] = format("%08x", lanes_hi[lanes_used + j] % 4294967296) .. format("%08x", lanes_lo[lanes_used + j] % 4294967296)
+                        end
+                    end
+
+                    lanes_used = lanes_used + qwords_qty
+                    return string.gsub(table.concat(qwords, "", 1, qwords_qty), "(..)(..)(..)(..)(..)(..)(..)(..)", "%8%7%6%5%4%3%2%1"), qwords_qty * 8
+                end
+
+                local parts = {} -- digest parts
+                local last_part, last_part_size = "", 0
+
+                local function get_next_part_of_digest(bytes_needed)
+                    -- returns 'bytes_needed' bytes, for arbitrary integer 'bytes_needed'
+                    bytes_needed = bytes_needed or 1
+                    if bytes_needed <= last_part_size then
+                        last_part_size = last_part_size - bytes_needed
+                        local part_size_in_nibbles = bytes_needed * 2
+                        local result = string.sub(last_part, 1, part_size_in_nibbles)
+                        last_part = string.sub(last_part, part_size_in_nibbles + 1)
+                        return result
+                    end
+
+                    local parts_qty = 0
+                    if last_part_size > 0 then
+                        parts_qty = 1
+                        parts[parts_qty] = last_part
+                        bytes_needed = bytes_needed - last_part_size
+                    end
+
+                    -- repeats until the length is enough
+                    while bytes_needed >= 8 do
+                        local next_part, next_part_size = get_next_qwords_of_digest(bytes_needed / 8)
+                        parts_qty = parts_qty + 1
+                        parts[parts_qty] = next_part
+                        bytes_needed = bytes_needed - next_part_size
+                    end
+
+                    if bytes_needed > 0 then
+                        last_part, last_part_size = get_next_qwords_of_digest(1)
+                        parts_qty = parts_qty + 1
+                        parts[parts_qty] = get_next_part_of_digest(bytes_needed)
+                    else
+                        last_part, last_part_size = "", 0
+                    end
+
+                    return table.concat(parts, "", 1, parts_qty)
+                end
+
+                if digest_size < 0 then
+                    result = get_next_part_of_digest
+                else
+                    result = get_next_part_of_digest(digest_size)
+                end
+
+            end
+
+            return result
+        end
+    end
+
+    if message then
+        -- Actually perform calculations and return the SHA3 digest of a message
+        return partial(message)()
+    else
+        -- Return function for chunk-by-chunk loading
+        -- User should feed every chunk of input data as single argument to this function and finally get SHA3 digest by invoking this function without an argument
+        return partial
+    end
 end
 
 function RoCrypt.sha1(message)
@@ -1240,19 +1603,39 @@ end
 
 
 function RoCrypt.sha224(message: string)
-    return sha256ext(224, message)
+    if sha256ext then
+        return sha256ext(224, message) 
+    else
+        sha_bootstrapper()
+        return sha256ext(224, message)
+    end
 end
 
 function RoCrypt.sha256(message: string)
-    return sha256ext(256, message)
+    if sha256ext then
+        return sha256ext(256, message) 
+    else
+        sha_bootstrapper()
+        return sha256ext(256, message)
+    end
 end
 
 function RoCrypt.sha384(message: string)
-    return sha512ext(384, message)
+    if sha512ext then
+        return sha512ext(384, message) 
+    else
+        sha_bootstrapper()
+        return sha512ext(384, message)
+    end
 end
 
 function RoCrypt.sha512(message: string)
-    return sha512ext(512, message)
+    if sha512ext then
+        return sha512ext(512, message) 
+    else
+        sha_bootstrapper()
+        return sha512ext(512, message)
+    end 
 end
 
 function RoCrypt.sha3_224(message: string)
@@ -1279,12 +1662,13 @@ function RoCrypt.shake256(message:string , digest_size: number)
     return keccak((1600 - 2 * 256) / 8, digest_size/2, true, message)
 end
 
-function RoCrypt.crc32(message: string, hex: boolean?)
+function RoCrypt.crc32(message: string, hex: boolean?) -- uses buffer
+    local bmessage = buffer.fromstring(message)
     local crc = 0xFFFFFFFF
     local polynomial = 0xEDB88320
 
-    for i = 1, #message do
-        local byte = string.byte(message, i)
+    for i = 0, buffer.len(bmessage) - 1 do
+        local byte = buffer.readu8(bmessage, i)
         crc = bxor(crc, byte)
 
         for _ = 1, 8 do
@@ -1292,12 +1676,15 @@ function RoCrypt.crc32(message: string, hex: boolean?)
             crc = bxor(rshift(crc, 1), band(polynomial, mask))
         end
     end
+
+    crc = bxor(crc, 0xFFFFFFFF)
     if hex == true then
-        return format("%X", bxor(crc, 0xFFFFFFFF))
-    elseif not hex or hex == false then
-        return bxor(crc, 0xFFFFFFFF)
+        return string.format("%X", crc)
+    else
+        return crc
     end
 end
+
 
 function RoCrypt.rsa()
     local primes = {	3,    5,    7,   11,   13,   17,   19,   23,   29,   31,   37,   41,   43,   47,
@@ -1899,49 +2286,71 @@ function RoCrypt.rsa()
 
 end
 
-function RoCrypt.base64()
-    local base64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+
+
+function RoCrypt.base64() -- uses buffer
+    local CHAR_SET = buffer.fromstring("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+    local base64charMap = buffer.create(256)
+    for i = 0, 63 do
+        buffer.writeu8(base64charMap, buffer.readu8(CHAR_SET, i), i)
+    end
 
     local function encode(data)
-        return (data:gsub(".", function(x)
-            local r, b = "", byte(x)
-            for i = 8, 1, -1 do
-                r = r .. (b % 2 ^ i - b % 2 ^ (i - 1) > 0 and "1" or "0")
-            end
-            return r
-        end) .. "0000"):gsub("%d%d%d?%d?%d?%d?", function(x)
-            if #x < 6 then
-                return ""
-            end
-            local c = 0
-            for i = 1, 6 do
-                c = c + (sub(x, i, i) == "1" and 2 ^ (6 - i) or 0)
-            end
-            return sub(base64chars, c + 1, c + 1)
-        end) .. ({ "", "==", "=" })[#data % 3 + 1]
+        local dataBuffer = buffer.fromstring(data)
+        local dataLength = buffer.len(dataBuffer)
+        local outputLength = math.ceil(dataLength / 3) * 4
+        local outputBuffer = buffer.create(outputLength)
+        local c = 0
+
+        for i = 0, dataLength - 1, 3 do
+            local b1 = buffer.readu8(dataBuffer, i)
+            local b2 = (i + 1 < dataLength) and buffer.readu8(dataBuffer, i + 1) or 0
+            local b3 = (i + 2 < dataLength) and buffer.readu8(dataBuffer, i + 2) or 0
+
+            local c1 = rshift(b1, 2)
+            local c2 = bor(lshift(band(b1, 3), 4), rshift(b2, 4))
+            local c3 = bor(lshift(band(b2, 15), 2), rshift(b3, 6))
+            local c4 = band(b3, 63)
+
+            buffer.writeu8(outputBuffer, c, buffer.readu8(CHAR_SET, c1))
+            buffer.writeu8(outputBuffer, c + 1, buffer.readu8(CHAR_SET, c2))
+            buffer.writeu8(outputBuffer, c + 2, (i + 1 < dataLength) and buffer.readu8(CHAR_SET, c3) or 61)
+            buffer.writeu8(outputBuffer, c + 3, (i + 2 < dataLength) and buffer.readu8(CHAR_SET, c4) or 61)
+            c = c + 4
+        end
+
+        return buffer.tostring(outputBuffer)
     end
 
     local function decode(data)
-        data = string.gsub(data, "[^" .. base64chars .. "=]", "")
-        return (data:gsub(".", function(x)
-            if x == "=" then
-                return ""
+        local dataBuffer = buffer.fromstring(data)
+        local dataLength = buffer.len(dataBuffer)
+        local outputLength = math.floor(dataLength / 4) * 3
+        local outputBuffer = buffer.create(outputLength)
+        local c = 0
+
+        for i = 0, dataLength - 1, 4 do
+            local c1 = buffer.readu8(base64charMap, buffer.readu8(dataBuffer, i))
+            local c2 = buffer.readu8(base64charMap, buffer.readu8(dataBuffer, i + 1))
+            local c3 = buffer.readu8(base64charMap, buffer.readu8(dataBuffer, i + 2))
+            local c4 = buffer.readu8(base64charMap, buffer.readu8(dataBuffer, i + 3))
+
+            buffer.writeu8(outputBuffer, c, bor(lshift(c1, 2), rshift(c2, 4)))
+            if c3 ~= 64 then
+                buffer.writeu8(outputBuffer, c + 1, bor(lshift(band(c2, 15), 4), rshift(c3, 2)))
+                if c4 ~= 64 then
+                    buffer.writeu8(outputBuffer, c + 2, bor(lshift(band(c3, 3), 6), c4))
+                    c = c + 3
+                else
+                    c = c + 2
+                end
+            else
+                c = c + 1
             end
-            local r, f = "", (sfind(base64chars, x) - 1)
-            for i = 6, 1, -1 do
-                r = r .. (f % 2 ^ i - f % 2 ^ (i - 1) > 0 and "1" or "0")
-            end
-            return r
-        end):gsub("%d%d%d?%d?%d?%d?%d?%d?", function(x)
-            if #x ~= 8 then
-                return ""
-            end
-            local c = 0
-            for i = 1, 8 do
-                c = c + (sub(x, i, i) == "1" and 2 ^ (8 - i) or 0)
-            end
-            return char(c)
-        end))
+        end
+
+        return buffer.tostring(outputBuffer, 0, c)
     end
 
     return {
@@ -1950,78 +2359,85 @@ function RoCrypt.base64()
     }
 end
 
-function RoCrypt.base91()
-    local CHAR_SET = [[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~"]]
 
-    local encode_CharSet = {}
-    local decode_CharSet = {}
-    for i = 1, 91 do
-        encode_CharSet[i-1] = string.sub(CHAR_SET, i, i)
-        decode_CharSet[string.sub(CHAR_SET, i, i)] = i-1
+
+function RoCrypt.base91() -- uses buffer
+    local CHAR_SET = buffer.fromstring([[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~"]])
+    local ENCODE_CHAR_SET = buffer.create(91)
+    local DECODE_CHAR_SET = buffer.create(256)
+    for i = 0, 90 do
+        local char = buffer.readu8(CHAR_SET, i)
+        buffer.writeu8(ENCODE_CHAR_SET, i, char)
+        buffer.writeu8(DECODE_CHAR_SET, char, i)
     end
 
-
     local function encodeBase91(input)
-        local output = {}
-        local c = 1
+        input = buffer.fromstring(input)
+        local outputBuffer = buffer.create(math.ceil(buffer.len(input) * 1.2))
+        local c, counter, numBits = 0, 0, 0
 
-        local counter = 0
-        local numBits = 0
 
-        for i = 1, #input do
-            counter = bor(counter, lshift(string.byte(input, i), numBits))
-            numBits = numBits+8
+        for i = 0, buffer.len(input) - 1 do
+            counter = bor(counter, lshift(buffer.readu8(input, i), numBits))
+            numBits = numBits + 8
             if numBits > 13 then
-                local entry = band(counter, 8191) -- 2^13-1 = 8191
-                if entry > 88 then -- Voodoo magic (https://www.reddit.com/r/learnprogramming/comments/8sbb3v/understanding_base91_encoding/e0y85ot/)
+                local entry = band(counter, 8191)
+                if entry > 88 then
                     counter = rshift(counter, 13)
-                    numBits = numBits-13
+                    numBits = numBits - 13
                 else
-                    entry = band(counter, 16383) -- 2^14-1 = 16383
+                    entry = band(counter, 16383)
                     counter = rshift(counter, 14)
-                    numBits = numBits-14
+                    numBits = numBits - 14
                 end
-                output[c] = encode_CharSet[entry%91]..encode_CharSet[floor(entry/91)]
-                c = c+1
+                buffer.writeu8(outputBuffer, c, buffer.readu8(ENCODE_CHAR_SET, entry%91))
+                buffer.writeu8(outputBuffer, c+1, buffer.readu8(ENCODE_CHAR_SET, floor(entry/91)))
+                c = c + 2
             end
         end
 
         if numBits > 0 then
-            output[c] = encode_CharSet[counter%91]
+            buffer.writeu8(outputBuffer, c, buffer.readu8(ENCODE_CHAR_SET, counter%91))
+            c = c + 1
             if numBits > 7 or counter > 90 then
-                output[c+1] = encode_CharSet[floor(counter/91)]
+                buffer.writeu8(outputBuffer, c, buffer.readu8(ENCODE_CHAR_SET, floor(counter/91)))
+                c = c + 1
             end
         end
 
-        return table.concat(output)
+        return buffer.tostring(outputBuffer, 0, c)
     end
 
     local function decodeBase91(input)
-        local output = {}
-        local c = 1
+        input = buffer.fromstring(input)
+
+        local outputBuffer = buffer.create(buffer.len(input))
+        local c = 0
 
         local counter = 0
         local numBits = 0
         local entry = -1
 
-        for i = 1, #input do
-            if decode_CharSet[string.sub(input, i, i)] then
+        for i = 0, buffer.len(input) - 1 do
+            local byte = buffer.readu8(input, i)
+            local decoded = buffer.readu8(DECODE_CHAR_SET, byte)
+            if decoded then
                 if entry == -1 then
-                    entry = decode_CharSet[string.sub(input, i, i)]
+                    entry = decoded
                 else
-                    entry = entry+decode_CharSet[string.sub(input, i, i)]*91
+                    entry = entry + decoded * 91
                     counter = bor(counter, lshift(entry, numBits))
                     if band(entry, 8191) > 88 then
-                        numBits = numBits+13
+                        numBits = numBits + 13
                     else
-                        numBits = numBits+14
+                        numBits = numBits + 14
                     end
 
                     while numBits > 7 do
-                        output[c] = string.char(counter%256)
-                        c = c+1
+                        buffer.writeu8(outputBuffer, c, counter % 256)
+                        c = c + 1
                         counter = rshift(counter, 8)
-                        numBits = numBits-8
+                        numBits = numBits - 8
                     end
                     entry = -1
                 end
@@ -2029,40 +2445,59 @@ function RoCrypt.base91()
         end
 
         if entry ~= -1 then
-            output[c] = string.char(bor(counter, lshift(entry, numBits))%256)
+            buffer.writeu8(outputBuffer, c, bor(counter, lshift(entry, numBits)) % 256)
+            c = c + 1
         end
 
-        return table.concat(output)
+        return buffer.tostring(outputBuffer, 0, c)
     end
 
     return {
         encode = encodeBase91,
         decode = decodeBase91,
     }
-
 end
 
-function RoCrypt.md2(message: string)
-    local queue = RoCrypt.utils.queue()
 
-    local SUBST = {
-        0x29, 0x2E, 0x43, 0xC9, 0xA2, 0xD8, 0x7C, 0x01, 0x3D, 0x36, 0x54, 0xA1, 0xEC, 0xF0, 0x06, 0x13,
-        0x62, 0xA7, 0x05, 0xF3, 0xC0, 0xC7, 0x73, 0x8C, 0x98, 0x93, 0x2B, 0xD9, 0xBC, 0x4C, 0x82, 0xCA,
-        0x1E, 0x9B, 0x57, 0x3C, 0xFD, 0xD4, 0xE0, 0x16, 0x67, 0x42, 0x6F, 0x18, 0x8A, 0x17, 0xE5, 0x12,
-        0xBE, 0x4E, 0xC4, 0xD6, 0xDA, 0x9E, 0xDE, 0x49, 0xA0, 0xFB, 0xF5, 0x8E, 0xBB, 0x2F, 0xEE, 0x7A,
-        0xA9, 0x68, 0x79, 0x91, 0x15, 0xB2, 0x07, 0x3F, 0x94, 0xC2, 0x10, 0x89, 0x0B, 0x22, 0x5F, 0x21,
-        0x80, 0x7F, 0x5D, 0x9A, 0x5A, 0x90, 0x32, 0x27, 0x35, 0x3E, 0xCC, 0xE7, 0xBF, 0xF7, 0x97, 0x03,
-        0xFF, 0x19, 0x30, 0xB3, 0x48, 0xA5, 0xB5, 0xD1, 0xD7, 0x5E, 0x92, 0x2A, 0xAC, 0x56, 0xAA, 0xC6,
-        0x4F, 0xB8, 0x38, 0xD2, 0x96, 0xA4, 0x7D, 0xB6, 0x76, 0xFC, 0x6B, 0xE2, 0x9C, 0x74, 0x04, 0xF1,
-        0x45, 0x9D, 0x70, 0x59, 0x64, 0x71, 0x87, 0x20, 0x86, 0x5B, 0xCF, 0x65, 0xE6, 0x2D, 0xA8, 0x02,
-        0x1B, 0x60, 0x25, 0xAD, 0xAE, 0xB0, 0xB9, 0xF6, 0x1C, 0x46, 0x61, 0x69, 0x34, 0x40, 0x7E, 0x0F,
-        0x55, 0x47, 0xA3, 0x23, 0xDD, 0x51, 0xAF, 0x3A, 0xC3, 0x5C, 0xF9, 0xCE, 0xBA, 0xC5, 0xEA, 0x26,
-        0x2C, 0x53, 0x0D, 0x6E, 0x85, 0x28, 0x84, 0x09, 0xD3, 0xDF, 0xCD, 0xF4, 0x41, 0x81, 0x4D, 0x52,
-        0x6A, 0xDC, 0x37, 0xC8, 0x6C, 0xC1, 0xAB, 0xFA, 0x24, 0xE1, 0x7B, 0x08, 0x0C, 0xBD, 0xB1, 0x4A,
-        0x78, 0x88, 0x95, 0x8B, 0xE3, 0x63, 0xE8, 0x6D, 0xE9, 0xCB, 0xD5, 0xFE, 0x3B, 0x00, 0x1D, 0x39,
-        0xF2, 0xEF, 0xB7, 0x0E, 0x66, 0x58, 0xD0, 0xE4, 0xA6, 0x77, 0x72, 0xF8, 0xEB, 0x75, 0x4B, 0x0A,
-        0x31, 0x44, 0x50, 0xB4, 0x8F, 0xED, 0x1F, 0x1A, 0xDB, 0x99, 0x8D, 0x33, 0x9F, 0x11, 0x83, 0x14
-    }
+function RoCrypt.md2(message: string)
+    local queue = RoCrypt.utils.queue_buffer()
+    local pi = "3"..persistent.pi(722)
+    local piIndex = 1
+    local function pi_prng(n)
+        while true do
+            local ml = {10, 100, 1000}
+            local x, y
+            if n <= ml[1] then
+                x, y = tonumber(string.sub(pi, piIndex, piIndex)), ml[1]
+                piIndex += 1
+            elseif n <= ml[2] then
+                x, y = tonumber(string.sub(pi, piIndex, piIndex + 1)), ml[2]
+                piIndex += 2
+            elseif n <= ml[3] then
+                x, y = tonumber(string.sub(pi, piIndex, piIndex + 2)), ml[3]
+                piIndex += 3
+            else
+            end
+
+            if x < (n * math.floor(y / n)) then
+                return x % n
+            end
+        end
+    end
+    local SUBST = {}
+    for i = 1, 256 do
+        SUBST[i] = i
+    end
+
+    for i = 2, 256 do
+        local j = pi_prng(i)+1
+        SUBST[j], SUBST[i] = SUBST[i], SUBST[j]
+
+    end
+    for i,_ in ipairs(SUBST) do
+        SUBST[i] -= 1
+    end
+
 
 
     local bytes2word = function(b0, b1, b2, b3)
@@ -2308,147 +2743,155 @@ function RoCrypt.md4(message: string)
 end
 
 function RoCrypt.md5(message: string)
-    local md5_K, md5_sha1_H = {}, {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0}
-    local md5_next_shift = {0, 0, 0, 0, 0, 0, 0, 0, 28, 25, 26, 27, 0, 0, 10, 9, 11, 12, 0, 15, 16, 17, 18, 0, 20, 22, 23, 21}
+    local function safeAdd (x, y)
+        if x==nil then x=0 end
+        if y==nil then y=0 end
+        local lsw = bit.band(x , 0xffff) + bit.band(y , 0xffff)
+        local msw = bit.arshift(x , 16) + bit.arshift(y , 16) + bit.arshift(lsw , 16)
+        return bit.bor( bit.lshift(msw , 16) , bit.band(lsw , 0xffff) )
+    end
+    local function md5cmn (q, a, b, x, s, t)
+        return safeAdd(bit32.lrotate(safeAdd(safeAdd(a, q), safeAdd(x, t)), s), b)
+    end
+    local function md5ff (a, b, c, d, x, s, t)
+        return md5cmn( bit.bor(bit.band(b , c) , bit.band(bit.bnot(b) , d) ), a, b, x, s, t)
+    end
+    local function md5gg (a, b, c, d, x, s, t)
+        return md5cmn( bit.bor(bit.band(b , d) , bit.band(c , bit.bnot(d)) ), a, b, x, s, t)
+    end
+    local function md5hh (a, b, c, d, x, s, t)
+        return md5cmn( bit.bxor(b , c , d), a, b, x, s, t)
+    end
+    local function md5ii (a, b, c, d, x, s, t)
+        return md5cmn( bit.bxor(c , bit.bor( b , bit.bnot(d) ) ), a, b, x, s, t)
+    end
 
-    local function md5_feed_64(H, str, offs, size)
-        -- offs >= 0, size >= 0, size is multiple of 64
-        local W, K, md5_next_shift = persistent["md5"]["common_W"], md5_K, md5_next_shift
-        local h1, h2, h3, h4 = H[1], H[2], H[3], H[4]
-        for pos = offs, offs + size - 1, 64 do
-            for j = 1, 16 do
-                pos = pos + 4
-                local a, b, c, d = string.byte(str, pos - 3, pos)
-                W[j] = ((d * 256 + c) * 256 + b) * 256 + a
-            end
+    local function binlMD5 (x, len)
+        --append padding
+        x[1+bit.arshift(len , 5)] = bit.bor( x[1+bit.arshift(len , 5)] , bit.lshift(0x80 , (len % 32)) )
+        x[1+bit.lshift(bit.rshift( len + 64 , 9 ) , 4) + 14] = len
 
-            local a, b, c, d = h1, h2, h3, h4
-            local s = 25
-            for j = 1, 16 do
-                local F = rrotate(band(b, c) + band(-1 - b, d) + a + K[j] + W[j], s) + b
-                s = md5_next_shift[s]
-                a = d
-                d = c
-                c = b
-                b = F
-            end
+        local i, olda, oldb, oldc, oldd
+        local a = 1732584193
+        local b = -271733879
+        local c = -1732584194
+        local d = 271733878
 
-            s = 27
-            for j = 17, 32 do
-                local F = rrotate(band(d, b) + band(-1 - d, c) + a + K[j] + W[(5 * j - 4) % 16 + 1], s) + b
-                s = md5_next_shift[s]
-                a = d
-                d = c
-                c = b
-                b = F
-            end
+        for i = 1,#x,16 do
+            olda = a
+            oldb = b
+            oldc = c
+            oldd = d
 
-            s = 28
-            for j = 33, 48 do
-                local F = rrotate(bxor(bxor(b, c), d) + a + K[j] + W[(3 * j + 2) % 16 + 1], s) + b
-                s = md5_next_shift[s]
-                a = d
-                d = c
-                c = b
-                b = F
-            end
+            a = md5ff(a, b, c, d, x[i], 7, -680876936)
+            d = md5ff(d, a, b, c, x[i + 1], 12, -389564586)
+            c = md5ff(c, d, a, b, x[i + 2], 17, 606105819)
+            b = md5ff(b, c, d, a, x[i + 3], 22, -1044525330)
+            a = md5ff(a, b, c, d, x[i + 4], 7, -176418897)
+            d = md5ff(d, a, b, c, x[i + 5], 12, 1200080426)
+            c = md5ff(c, d, a, b, x[i + 6], 17, -1473231341)
+            b = md5ff(b, c, d, a, x[i + 7], 22, -45705983)
+            a = md5ff(a, b, c, d, x[i + 8], 7, 1770035416)
+            d = md5ff(d, a, b, c, x[i + 9], 12, -1958414417)
+            c = md5ff(c, d, a, b, x[i + 10], 17, -42063)
+            b = md5ff(b, c, d, a, x[i + 11], 22, -1990404162)
+            a = md5ff(a, b, c, d, x[i + 12], 7, 1804603682)
+            d = md5ff(d, a, b, c, x[i + 13], 12, -40341101)
+            c = md5ff(c, d, a, b, x[i + 14], 17, -1502002290)
+            b = md5ff(b, c, d, a, x[i + 15], 22, 1236535329)
 
-            s = 26
-            for j = 49, 64 do
-                local F = rrotate(bxor(c, bor(b, -1 - d)) + a + K[j] + W[(j * 7 - 7) % 16 + 1], s) + b
-                s = md5_next_shift[s]
-                a = d
-                d = c
-                c = b
-                b = F
-            end
+            a = md5gg(a, b, c, d, x[i + 1], 5, -165796510)
+            d = md5gg(d, a, b, c, x[i + 6], 9, -1069501632)
+            c = md5gg(c, d, a, b, x[i + 11], 14, 643717713)
+            b = md5gg(b, c, d, a, x[i], 20, -373897302)
+            a = md5gg(a, b, c, d, x[i + 5], 5, -701558691)
+            d = md5gg(d, a, b, c, x[i + 10], 9, 38016083)
+            c = md5gg(c, d, a, b, x[i + 15], 14, -660478335)
+            b = md5gg(b, c, d, a, x[i + 4], 20, -405537848)
+            a = md5gg(a, b, c, d, x[i + 9], 5, 568446438)
+            d = md5gg(d, a, b, c, x[i + 14], 9, -1019803690)
+            c = md5gg(c, d, a, b, x[i + 3], 14, -187363961)
+            b = md5gg(b, c, d, a, x[i + 8], 20, 1163531501)
+            a = md5gg(a, b, c, d, x[i + 13], 5, -1444681467)
+            d = md5gg(d, a, b, c, x[i + 2], 9, -51403784)
+            c = md5gg(c, d, a, b, x[i + 7], 14, 1735328473)
+            b = md5gg(b, c, d, a, x[i + 12], 20, -1926607734)
 
-            h1 = (a + h1) % 4294967296
-            h2 = (b + h2) % 4294967296
-            h3 = (c + h3) % 4294967296
-            h4 = (d + h4) % 4294967296
+            a = md5hh(a, b, c, d, x[i + 5], 4, -378558)
+            d = md5hh(d, a, b, c, x[i + 8], 11, -2022574463)
+            c = md5hh(c, d, a, b, x[i + 11], 16, 1839030562)
+            b = md5hh(b, c, d, a, x[i + 14], 23, -35309556)
+            a = md5hh(a, b, c, d, x[i + 1], 4, -1530992060)
+            d = md5hh(d, a, b, c, x[i + 4], 11, 1272893353)
+            c = md5hh(c, d, a, b, x[i + 7], 16, -155497632)
+            b = md5hh(b, c, d, a, x[i + 10], 23, -1094730640)
+            a = md5hh(a, b, c, d, x[i + 13], 4, 681279174)
+            d = md5hh(d, a, b, c, x[i], 11, -358537222)
+            c = md5hh(c, d, a, b, x[i + 3], 16, -722521979)
+            b = md5hh(b, c, d, a, x[i + 6], 23, 76029189)
+            a = md5hh(a, b, c, d, x[i + 9], 4, -640364487)
+            d = md5hh(d, a, b, c, x[i + 12], 11, -421815835)
+            c = md5hh(c, d, a, b, x[i + 15], 16, 530742520)
+            b = md5hh(b, c, d, a, x[i + 2], 23, -995338651)
+
+            a = md5ii(a, b, c, d, x[i], 6, -198630844)
+            d = md5ii(d, a, b, c, x[i + 7], 10, 1126891415)
+            c = md5ii(c, d, a, b, x[i + 14], 15, -1416354905)
+            b = md5ii(b, c, d, a, x[i + 5], 21, -57434055)
+            a = md5ii(a, b, c, d, x[i + 12], 6, 1700485571)
+            d = md5ii(d, a, b, c, x[i + 3], 10, -1894986606)
+            c = md5ii(c, d, a, b, x[i + 10], 15, -1051523)
+            b = md5ii(b, c, d, a, x[i + 1], 21, -2054922799)
+            a = md5ii(a, b, c, d, x[i + 8], 6, 1873313359)
+            d = md5ii(d, a, b, c, x[i + 15], 10, -30611744)
+            c = md5ii(c, d, a, b, x[i + 6], 15, -1560198380)
+            b = md5ii(b, c, d, a, x[i + 13], 21, 1309151649)
+            a = md5ii(a, b, c, d, x[i + 4], 6, -145523070)
+            d = md5ii(d, a, b, c, x[i + 11], 10, -1120210379)
+            c = md5ii(c, d, a, b, x[i + 2], 15, 718787259)
+            b = md5ii(b, c, d, a, x[i + 9], 21, -343485551)
+
+            a = safeAdd(a, olda)
+            b = safeAdd(b, oldb)
+            c = safeAdd(c, oldc)
+            d = safeAdd(d, oldd)
         end
-
-        H[1], H[2], H[3], H[4] = h1, h2, h3, h4
+        return {a, b, c, d}
     end
 
-    -- Constants for MD5
-    do
-        for idx = 1, 64 do
-            -- we can't use formula floor(abs(sin(idx))*2^32) because its result may be beyond integer range on Lua built with 32-bit integers
-            local hi, lo = math.modf(math.abs(math.sin(idx)) * 2^16)
-            md5_K[idx] = hi * 65536 + floor(lo * 2^16)
+    local function binl2rstr (input)
+        local i
+        local output = {}
+        local length32 = #input * 32
+        for i = 0,length32-1,8 do
+            table.insert(output,string.char( bit.band(bit.rshift( input[1+ bit.arshift(i , 5)] , i % 32 ) , 0xff ) ) )
         end
+        return table.concat(output,'')
     end
 
-    -- Create an instance (private objects for current calculation)
-    local H, length, queue = table.create(4), 0, RoCrypt.utils.queue()
-    H[1], H[2], H[3], H[4] = md5_sha1_H[1], md5_sha1_H[2], md5_sha1_H[3], md5_sha1_H[4]
-
-    local function partial(message_part)
-        if message_part then
-            queue.push(message_part)
-            return partial
-        else
-            local tail = ""
-            while queue.size() > 0 do
-                local message_part = queue.pop()
-                local partLength = #message_part
-                if tail then
-                    length = length + partLength
-                    local offs = 0
-                    if tail ~= "" and #tail + partLength >= 64 then
-                        offs = 64 - #tail
-                        md5_feed_64(H, tail .. string.sub(message_part, 1, offs), 0, 64)
-                        tail = ""
-                    end
-
-                    local size = partLength - offs
-                    local size_tail = size % 64
-                    md5_feed_64(H, message_part, offs, size - size_tail)
-                    tail = tail .. string.sub(message_part, partLength + 1 - size_tail)
-                else
-                    length = length + partLength
-                    local size_tail = partLength % 64
-                    md5_feed_64(H, message_part, 0, partLength - size_tail)
-                    tail = string.sub(message_part, partLength + 1 - size_tail)
-                end
-            end
-
-            if tail then
-                local final_blocks = table.create(3) --{tail, "\128", rep("\0", (-9 - length) % 64)}
-                final_blocks[1] = tail
-                final_blocks[2] = "\128"
-                final_blocks[3] = rep("\0", (-9 - length) % 64)
-                tail = nil
-                length = length * 8 -- convert "byte-counter" to "bit-counter"
-                for j = 4, 11 do
-                    local low_byte = length % 256
-                    final_blocks[j] = string.char(low_byte)
-                    length = (length - low_byte) / 256
-                end
-
-                final_blocks = table.concat(final_blocks)
-                md5_feed_64(H, final_blocks, 0, #final_blocks)
-                for j = 1, 4 do
-                    H[j] = format("%08x", H[j] % 4294967296)
-                end
-
-                H = string.gsub(table.concat(H), "(..)(..)(..)(..)", "%4%3%2%1")
-            end
-
-            return H
+    local function rstr2binl (input)
+        local output = {}
+        for i = 1,bit.arshift( string.len(input) , 2) do
+            output[i] = 0
         end
+        local length8 = string.len(input) * 8
+        for i = 0,length8-1,8 do
+            local p = 1+bit.arshift(i , 5);
+            if output[p] == nil then output[p] = 0 end
+            output[p] =  bit.bor( output[p], bit.lshift( bit.band(input:byte((i / 8)+1) , 0xff) , (i % 32) ) )
+        end
+        return output
     end
 
-    if message then
-        -- Actually perform calculations and return the MD5 digest of a message
-        return partial(message)()
-    else
-        -- Return function for chunk-by-chunk loading
-        -- User should feed every chunk of input data as single argument to this function and finally get MD5 digest by invoking this function without an argument
-        return partial
+    local function rstrMD5 (s)
+        return binl2rstr(binlMD5(rstr2binl(s), string.len(s) * 8))
     end
+
+
+
+
+
+    return RoCrypt.utils.string2hex(binl2rstr(binlMD5(rstr2binl(message), string.len(message) * 8)))
 end
 
 function RoCrypt.ripemd128(message: string)
@@ -3325,9 +3768,14 @@ function RoCrypt.aes(message: any?)
                 move(encrypt(key, km, k, s, t), 1, 16, i, b)
             end
 
-            return b
+            return RoCrypt.utils.bytes2hex(b)
         end,
-        decrypt_ECB = function(key : bytes, cipherText : bytes) 								: bytes
+        decrypt_ECB = function(key : any, cipherText : any) 								: any
+            if not RoCrypt.utils.isStringHex(cipherText) then 
+                return error("Input text must be a hexadecimal string!")     
+            end
+            cipherText = RoCrypt.utils.hex2bytes(cipherText)
+
             local km
             key, cipherText, km = init(key, cipherText)
 
@@ -3337,7 +3785,7 @@ function RoCrypt.aes(message: any?)
                 move(decrypt(key, km, k, s, t), 1, 16, i, b)
             end
 
-            return b
+            return RoCrypt.utils.bytes2string(b)
         end,
         -- Cipher block chaining (CBC)
         encrypt_CBC = function(key : bytes, plainText : bytes, initVector : bytes?) 			: bytes
@@ -3350,11 +3798,16 @@ function RoCrypt.aes(message: any?)
                 move(encrypt(key, km, xorBytes(t, k, p), s, p), 1, 16, i, b)
             end
 
-            return b
+            return RoCrypt.utils.bytes2hex(b)
         end,
         decrypt_CBC = function(key : bytes, cipherText : bytes, initVector : bytes?) 			: bytes
+            if not RoCrypt.utils.isStringHex(cipherText) then 
+                return error("Input text must be a hexadecimal string!")     
+            end            
+            cipherText = RoCrypt.utils.hex2bytes(cipherText)
             local km
             key, cipherText, km, initVector = init(key, cipherText, false, initVector)
+
 
             local b, k, p, s, t = {}, {}, initVector, {{}, {}, {}, {}}, {}
             for i = 1, #cipherText, 16 do
@@ -3363,7 +3816,7 @@ function RoCrypt.aes(message: any?)
                 move(cipherText, i, i + 15, 1, p)
             end
 
-            return b
+            return  RoCrypt.utils.bytes2string(b)
         end,
         -- Propagating cipher block chaining (PCBC)
         encrypt_PCBC = function(key : bytes, plainText : bytes, initVector : bytes?) 			: bytes
@@ -3380,6 +3833,9 @@ function RoCrypt.aes(message: any?)
             return b
         end,
         decrypt_PCBC = function(key : bytes, cipherText : bytes, initVector : bytes?) 			: bytes
+            if not RoCrypt.utils.isStringHex(cipherText) then 
+                return error("Input text must be a hexadecimal string!")     
+            end
             local km
             key, cipherText, km, initVector = init(key, cipherText, false, initVector)
 
@@ -3393,8 +3849,9 @@ function RoCrypt.aes(message: any?)
             return b
         end,
         -- Cipher feedback (CFB)
-        encrypt_CFB = function(key : bytes, plainText : bytes, initVector : bytes?, segmentSize : number?)
-            : bytes
+        encrypt_CFB = function(key, plainText, initVector : bytes?, segmentSize : number?)
+
+
             local km
             key, plainText, km, initVector, segmentSize = init(key, plainText, false, initVector,
                 if segmentSize == nil then 1 else segmentSize)
@@ -3409,10 +3866,13 @@ function RoCrypt.aes(message: any?)
                 move(q, 1, 16, 1, p)
             end
 
-            return b
+            return RoCrypt.utils.bytes2hex(b)
         end,
-        decrypt_CFB = function(key : bytes, cipherText : bytes, initVector : bytes, segmentSize : number?)
-            : bytes
+        decrypt_CFB = function(key, cipherText, initVector : bytes, segmentSize : number?)
+            if not RoCrypt.utils.isStringHex(cipherText) then 
+                return error("Input text must be a hexadecimal string!")     
+            end
+            cipherText = RoCrypt.utils.hex2bytes(cipherText)
             local km
             key, cipherText, km, initVector, segmentSize = init(key, cipherText, false, initVector,
                 if segmentSize == nil then 1 else segmentSize)
@@ -3427,7 +3887,7 @@ function RoCrypt.aes(message: any?)
                 move(k, 1, 16, 1, p)
             end
 
-            return b
+            return RoCrypt.utils.bytes2string(b)
         end,
         -- Output feedback (OFB)
         encrypt_OFB = function(key : bytes, plainText : bytes, initVector : bytes?) 			: bytes
@@ -3441,11 +3901,31 @@ function RoCrypt.aes(message: any?)
                 move(xorBytes(t, k, p), 1, 16, i, b)
             end
 
-            return b
+            return RoCrypt.utils.bytes2hex(b)
+        end,
+        decrypt_OFB = function(key : bytes, plainText : bytes, initVector : bytes?) 			: bytes
+            if not RoCrypt.utils.isStringHex(plainText) then 
+                return error("Input text must be a hexadecimal string!")     
+            end
+            plainText = RoCrypt.utils.hex2bytes(plainText)
+            local km
+            key, plainText, km, initVector = init(key, plainText, false, initVector)
+
+            local b, k, p, s, t = {}, {}, initVector, {{}, {}, {}, {}}, {}
+            for i = 1, #plainText, 16 do
+                move(plainText, i, i + 15, 1, k)
+                move(encrypt(key, km, p, s, t), 1, 16, 1, p)
+                move(xorBytes(t, k, p), 1, 16, i, b)
+            end
+
+            return RoCrypt.utils.bytes2string(b)
         end,
         -- Counter (CTR)
-        encrypt_CTR = function(key : bytes, plainText : bytes, counter : ((bytes) -> bytes) | bytes | { [
+        encrypt_CTR = function(key, plainText, counter : ((bytes) -> bytes) | bytes | { [
             string]: any }?) : bytes
+
+
+
             local km
             key, plainText, km, counter = init(key, plainText, true, counter)
 
@@ -3468,8 +3948,42 @@ function RoCrypt.aes(message: any?)
                 move(xorBytes(c, encrypt(key, km, c, s, t), k), 1, 16, i, b)
             end
 
-            return b
+            return RoCrypt.utils.bytes2hex(b)
+        end,
+        decrypt_CTR = function(key, plainText, counter : ((bytes) -> bytes) | bytes | { [
+            string]: any }?) : bytes
+
+            if not RoCrypt.utils.isStringHex(plainText) then 
+                return error("Input text must be a hexadecimal string!")     
+            end
+
+            plainText = RoCrypt.utils.hex2bytes(plainText)
+
+            local km
+            key, plainText, km, counter = init(key, plainText, true, counter)
+
+            local b, k, c, s, t, r, n = {}, {}, {}, {{}, {}, {}, {}}, {}, type(counter) == "table", nil
+            for i = 1, #plainText, 16 do
+                if r then
+                    if i > 1 and incBytes(counter.InitValue, counter.LittleEndian) then
+                        move(counter.InitOverflow, 1, 16, 1, counter.InitValue)
+                    end
+                    clear	(c)
+                    move	(counter.Prefix, 1, #counter.Prefix, 1, c)
+                    move	(counter.InitValue, 1, counter.Length, #c + 1, c)
+                    move	(counter.Suffix, 1, #counter.Suffix, #c + 1, c)
+                else
+                    n = convertType(counter(c, (i + 15) / 16))
+                    assert		(#n == 16, "Counter must be 16 bytes long")
+                    move	(n, 1, 16, 1, c)
+                end
+                move(plainText, i, i + 15, 1, k)
+                move(xorBytes(c, encrypt(key, km, c, s, t), k), 1, 16, i, b)
+            end
+
+            return RoCrypt.utils.bytes2string(b)
         end
+
     } -- Returns the library
 end
 
@@ -3556,6 +4070,7 @@ function RoCrypt.hmac(hash_func: any, key: any, message: any)
         return partial
     end
 end
+
 
 
 
@@ -4121,6 +4636,294 @@ function RoCrypt.des3()
 
     return DES3;
 end
+
+-- @ https://gist.github.com/metatablecat/92345df2fd6d450da288c28272555faf
+function RoCrypt.compression.lz4()
+    local lz4 = {}
+
+    type Streamer = {
+        Offset: number,
+        Source: string,
+        Length: number,
+        IsFinished: boolean,
+        LastUnreadBytes: number,
+
+        read: (Streamer, len: number?, shiftOffset: boolean?) -> string,
+        seek: (Streamer, len: number) -> (),
+        append: (Streamer, newData: string) -> (),
+        toEnd: (Streamer) -> ()
+    }
+
+    type BlockData = {
+        [number]: {
+            Literal: string,
+            LiteralLength: number,
+            MatchOffset: number?,
+            MatchLength: number?
+        }
+    }
+
+    local function plainFind(str, pat)
+        return string.find(str, pat, 0, true)
+    end
+
+    local function streamer(str): Streamer
+        local Stream = {}
+        Stream.Offset = 0
+        Stream.Source = str
+        Stream.Length = string.len(str)
+        Stream.IsFinished = false	
+        Stream.LastUnreadBytes = 0
+
+        function Stream.read(self: Streamer, len: number?, shift: boolean?): string
+            local len = len or 1
+            local shift = if shift ~= nil then shift else true
+            local dat = string.sub(self.Source, self.Offset + 1, self.Offset + len)
+
+            local dataLength = string.len(dat)
+            local unreadBytes = len - dataLength
+
+            if shift then
+                self:seek(len)
+            end
+
+            self.LastUnreadBytes = unreadBytes
+            return dat
+        end
+
+        function Stream.seek(self: Streamer, len: number)
+            local len = len or 1
+
+            self.Offset = math.clamp(self.Offset + len, 0, self.Length)
+            self.IsFinished = self.Offset >= self.Length
+        end
+
+        function Stream.append(self: Streamer, newData: string)
+            -- adds new data to the end of a stream
+            self.Source ..= newData
+            self.Length = string.len(self.Source)
+            self:seek(0) --hacky but forces a recalculation of the isFinished flag
+        end
+
+        function Stream.toEnd(self: Streamer)
+            self:seek(self.Length)
+        end
+
+        return Stream
+    end
+
+    function lz4.compress(str: string): string
+        local blocks: BlockData = {}
+        local iostream = streamer(str)
+
+        if iostream.Length > 12 then
+            local firstFour = iostream:read(4)
+
+            local processed = firstFour
+            local lit = firstFour
+            local match = ""
+            local LiteralPushValue = ""
+            local pushToLiteral = true
+
+            repeat
+                pushToLiteral = true
+                local nextByte = iostream:read()
+
+                if plainFind(processed, nextByte) then
+                    local next3 = iostream:read(3, false)
+
+                    if string.len(next3) < 3 then
+                        --push bytes to literal block then break
+                        LiteralPushValue = nextByte .. next3
+                        iostream:seek(3)
+                    else
+                        match = nextByte .. next3
+
+                        local matchPos = plainFind(processed, match)
+                        if matchPos then
+                            iostream:seek(3)
+                            repeat
+                                local nextMatchByte = iostream:read(1, false)
+                                local newResult = match .. nextMatchByte
+
+                                local repos = plainFind(processed, newResult) 
+                                if repos then
+                                    match = newResult
+                                    matchPos = repos
+                                    iostream:seek(1)
+                                end
+                            until not plainFind(processed, newResult) or iostream.IsFinished
+
+                            local matchLen = string.len(match)
+                            local pushMatch = true
+
+                            if iostream.Length - iostream.Offset <= 5 then
+                                LiteralPushValue = match
+                                pushMatch = false
+                                --better safe here, dont bother pushing to match ever
+                            end
+
+                            if pushMatch then
+                                pushToLiteral = false
+
+                                -- gets the position from the end of processed, then slaps it onto processed
+                                local realPosition = string.len(processed) - matchPos
+                                processed = processed .. match
+
+                                table.insert(blocks, {
+                                    Literal = lit,
+                                    LiteralLength = string.len(lit),
+                                    MatchOffset = realPosition + 1,
+                                    MatchLength = matchLen,
+                                })
+                                lit = ""
+                            end
+                        else
+                            LiteralPushValue = nextByte
+                        end
+                    end
+                else
+                    LiteralPushValue = nextByte
+                end
+
+                if pushToLiteral then
+                    lit = lit .. LiteralPushValue
+                    processed = processed .. nextByte
+                end
+            until iostream.IsFinished
+            table.insert(blocks, {
+                Literal = lit,
+                LiteralLength = string.len(lit)
+            })
+        else
+            local str = iostream.Source
+            blocks[1] = {
+                Literal = str,
+                LiteralLength = string.len(str)
+            }
+        end
+
+        -- generate the output chunk
+        -- %s is for adding header
+        local output = string.rep("\x00", 4)
+        local function write(char)
+            output = output .. char
+        end
+        -- begin working through chunks
+        for chunkNum, chunk in blocks do
+            local litLen = chunk.LiteralLength
+            local matLen = (chunk.MatchLength or 4) - 4
+
+            -- create token
+            local tokenLit = math.clamp(litLen, 0, 15)
+            local tokenMat = math.clamp(matLen, 0, 15)
+
+            local token = bit32.lshift(tokenLit, 4) + tokenMat
+            write(string.pack("<I1", token))
+
+            if litLen >= 15 then
+                litLen = litLen - 15
+                --begin packing extra bytes
+                repeat
+                    local nextToken = math.clamp(litLen, 0, 0xFF)
+                    write(string.pack("<I1", nextToken))
+                    if nextToken == 0xFF then
+                        litLen = litLen - 255
+                    end
+                until nextToken < 0xFF
+            end
+
+            -- push raw lit data
+            write(chunk.Literal)
+
+            if chunkNum ~= #blocks then
+                -- push offset as u16
+                write(string.pack("<I2", chunk.MatchOffset))
+
+                -- pack extra match bytes
+                if matLen >= 15 then
+                    matLen = matLen - 15
+
+                    repeat
+                        local nextToken = math.clamp(matLen, 0, 0xFF)
+                        write(string.pack("<I1", nextToken))
+                        if nextToken == 0xFF then
+                            matLen = matLen - 255
+                        end
+                    until nextToken < 0xFF
+                end
+            end
+        end
+        --append chunks
+        local compLen = string.len(output) - 4
+        local decompLen = iostream.Length
+        return string.pack("<I4", compLen) .. string.pack("<I4", decompLen) .. output
+    end
+
+    function lz4.decompress(lz4data: string): string
+        local inputStream = streamer(lz4data)
+
+        local compressedLen = string.unpack("<I4", inputStream:read(4))
+        local decompressedLen = string.unpack("<I4", inputStream:read(4))
+        local reserved = string.unpack("<I4", inputStream:read(4))
+
+        if compressedLen == 0 then
+            return inputStream:read(decompressedLen)
+        end
+
+        local outputStream = streamer("")
+
+        repeat
+            local token = string.byte(inputStream:read())
+            local litLen = bit32.rshift(token, 4)
+            local matLen = bit32.band(token, 15) + 4
+
+            if litLen >= 15 then
+                repeat
+                    local nextByte = string.byte(inputStream:read())
+                    litLen += nextByte
+                until nextByte ~= 0xFF
+            end
+
+            local literal = inputStream:read(litLen)
+            outputStream:append(literal)
+            outputStream:toEnd()
+            if outputStream.Length < decompressedLen then
+                --match
+                local offset = string.unpack("<I2", inputStream:read(2))
+                if matLen >= 19 then
+                    repeat
+                        local nextByte = string.byte(inputStream:read())
+                        matLen += nextByte
+                    until nextByte ~= 0xFF
+                end
+
+                outputStream:seek(-offset)
+                local pos = outputStream.Offset
+                local match = outputStream:read(matLen)
+                local unreadBytes = outputStream.LastUnreadBytes
+                local extra
+                if unreadBytes then
+                    repeat
+                        outputStream.Offset = pos
+                        extra = outputStream:read(unreadBytes)
+                        unreadBytes = outputStream.LastUnreadBytes
+                        match ..= extra
+                    until unreadBytes <= 0
+                end
+
+                outputStream:append(match)
+                outputStream:toEnd()
+            end
+
+        until outputStream.Length >= decompressedLen
+
+        return outputStream.Source
+    end
+
+    return lz4
+end
+
 
 
 

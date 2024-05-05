@@ -19,6 +19,8 @@ A pure-Lua (5.1) cryptography module supporting:
   - DES, Triple DES
 - Shared-secret algorithms
   - HMAC
+- Compression algorithms
+  - LZ4, ZLIB, Deflate
 - UID (unique identifier) algorithms
   - Snowflake
 

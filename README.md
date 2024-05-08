@@ -22,7 +22,7 @@ A pure-Lua (5.1) cryptography module supporting:
 - Compression algorithms
   - LZ4, ZLIB, Deflate
 - UID (unique identifier) algorithms
-  - Snowflake
+  - Snowflake, Sqids
 
 ## Credit
 - RobloxGamerPro200007 - RSA function

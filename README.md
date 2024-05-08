@@ -30,11 +30,13 @@ A pure-Lua (5.1) cryptography module supporting:
 
 ## Usage
 
+- SHA256
 ```lua
 local RoCrypt = require(script.RoCrypt)
 local hash = RoCrypt.sha256("Hello, World!")
 ```
 
+- RSA
 ```lua
 local RoCrypt = require(script.RoCrypt)
 local RSA = RoCrypt.rsa()
@@ -44,6 +46,7 @@ decrypted = RSA.crypt(n, encrypted, d)
 print(decrypted[1]) -- Expected output: 242351
 ```
 
+- DES3
 ```lua
 local DES3 = RoCrypt.des3()
 
@@ -68,4 +71,13 @@ local decryptedBytes = DES3.decrypt(keyBytes, ciphertextBytes)
 -- convert the decrypted bytes back to a string
 local decrypted = string.char(unpack(decryptedBytes))
 print("Decrypted: " .. decrypted)
+```
+
+- Sqids
+```lua
+local RoCrypt = require(script.Parent.Script.RoCrypt)
+
+local sqids = RoCrypt.sqids().new() --> function
+local encoded = sqids:encode(1, 2, 3, 4) --> string: v2fWhzi1
+local decoded = sqids:decode(encoded) --> table: {1, 2, 3, 4}
 ```
